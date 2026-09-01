@@ -9,10 +9,13 @@
 # 레이어의 가중치를 가려서 복사 원본이 빈 디렉터리가 된다.
 #
 # 이 파일은 임시다. 완료를 확인한 뒤 제거 커밋으로 지운다(Argo prune).
+#
+# 이름에 -2 가 붙은 이유: Job 은 불변이라 spec 을 고쳐도 Argo 가 갱신하지 못한다.
+# 이름을 바꾸면 새로 만들고 옛것은 prune 된다 - 수동 삭제가 필요 없다.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: folio-ai-models-prefill
+  name: folio-ai-models-prefill-2
 spec:
   backoffLimit: 2
   template:
