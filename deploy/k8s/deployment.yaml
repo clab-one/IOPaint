@@ -85,7 +85,16 @@ spec:
             - --port=8080
             - --model-dir=/models
             # 입장 제어. 무한 동시성이 컨테이너를 죽였다 - iopaint/admission.py.
-            - --inflight=1
+            #
+            # 1 이 아니라 5 인 이유: 로컬 CPU 를 지키는 일은 이제
+            # LocalBackend 의 슬롯(1개)이 맡는다. 여기서 전부 직렬화하면
+            # 로컬 CPU 를 쓰지도 않는 원격 호출까지 줄을 서고, 노드를 하나
+            # 더 붙여도 처리량이 늘지 않는다 - 실측 conc=1..8 전부
+            # 1.12 req/s 로 평평했고 로컬은 24건 중 0건을 처리했다.
+            #
+            # 5 = 로컬 1 + 원격 4. 백엔드 슬롯의 합이다. 동시에 실행되는
+            # torch 추론은 여전히 하나뿐이고, 나머지 넷은 네트워크 대기다.
+            - --inflight=5
             - --max-queue=8
           ports:
             - name: http
@@ -170,6 +179,11 @@ spec:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 30
             failureThreshold: 3
+            # kubelet 기본이 1초다. /healthz 는 async 라 이벤트 루프에서
+            # 답하므로 평소엔 1ms 도 안 걸리지만, 그 여유가 없으면 순간적인
+            # 지연 한 번이 재시작 카운트를 올린다. 죽음의 판정 기준은
+            # 넉넉해야 한다 - 살아 있는 컨테이너를 죽이는 쪽이 더 나쁘다.
+            timeoutSeconds: 5
           volumeMounts:
             - name: session
               mountPath: /session

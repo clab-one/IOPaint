@@ -201,7 +201,13 @@ class CoreMLBackend:
         ca: str,
         cert: str,
         key: str,
-        timeout: float = 20.0,
+        # 20 초는 너무 관대했다. 원격이 얼어붙는 순간 진행 중이던 요청 하나가
+        # 타임아웃을 다 쓰고서야 로컬로 넘어간다 - 실측 21,014ms. 요청은
+        # 성공하지만 그 지연이면 앱이 먼저 포기한다.
+        #
+        # 5 초는 정상 왕복(p50 290ms)의 17배, 슬롯이 꽉 찬 최악(약 1.5초)의
+        # 3배다. 여유는 충분하고 이탈 감지는 4배 빨라진다.
+        timeout: float = 5.0,
         seed_ms: float = 300.0,
         probe_timeout: float = 3.0,
         slots: int = 4,
