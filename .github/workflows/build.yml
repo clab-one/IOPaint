@@ -41,7 +41,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 이미지를 만들기 전에 배포 불변식을 검사한다.
+  #
+  # 왜 별도 잡인가 - 가중치 출처가 어긋난 상태로 네 번 배포됐다. 매번 사람이
+  # 두 파일을 대조하는 것으로는 못 막는다. 검사는 이미 test_deploy_consistency
+  # 에 있었지만 **아무도 실행하지 않았다** - 테스트 경로는 빌드 트리거에서도
+  # 빠져 있어서 로컬에서 돌릴 때만 유효했다. 여기서 돌려야 계약이 된다.
+  #
+  # 이 잡이 실패하면 build 가 시작되지 않고, 따라서 digest 도 바뀌지 않는다.
+  # torch 는 설치하지 않는다 - 이 검사는 Dockerfile 과 매니페스트를 읽을 뿐이라
+  # pytest 와 pyyaml 이면 충분하고, 몇 초에 끝난다.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pytest pyyaml
+      - name: 배포 불변식
+        run: pytest iopaint/tests/test_deploy_consistency.py -q
+
   build:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

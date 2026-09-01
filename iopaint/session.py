@@ -212,6 +212,16 @@ class Reaper:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+    @property
+    def alive(self) -> bool:
+        """돌고 있는가.
+
+        데몬 스레드는 조용히 죽는다. Python 3.12 는 스레드 이름을 OS 에
+        붙이지 않아 /proc 으로는 확인할 수 없다 - 그래서 프로세스가 스스로
+        답해야 한다. 이게 없으면 사진이 tmpfs 에 쌓이는 것을 아무도 모른다.
+        """
+        return self._thread is not None and self._thread.is_alive()
+
     def start(self) -> None:
         if self._thread is not None:
             return

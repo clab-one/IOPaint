@@ -315,6 +315,11 @@ class Api:
                 "ok": True,
                 "in_system": self.admission.present,
                 "capacity": self.admission.inflight + self.admission.max_queue,
+                # 세션은 tmpfs 에 산다 - 노드 RAM 이다. 몇 개가 살아 있는지
+                # 밖에서 볼 수 없으면 사진이 쌓이는 것을 아무도 모른다.
+                # reaper 는 데몬 스레드라 조용히 죽을 수 있고, Python 3.12 는
+                # 스레드 이름을 OS 에 붙이지 않아 /proc 으로도 확인이 안 된다.
+                "sessions": {**self.sessions.stats(), "reaper": self._reaper.alive},
             }
         )
 

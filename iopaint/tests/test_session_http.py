@@ -242,6 +242,34 @@ def test_session_limit_is_enforced_over_http(client):
     assert r.status_code == 503
 
 
+def test_healthz_reports_session_state(client):
+    """세션 수와 reaper 생사를 밖에서 볼 수 있어야 한다.
+
+    tmpfs 는 노드 RAM 이다. 몇 개가 살아 있는지 모르면 사진이 쌓이는 것을
+    아무도 모른다. reaper 는 데몬 스레드라 조용히 죽고, Python 3.12 는 스레드
+    이름을 OS 에 붙이지 않아 /proc 으로도 확인되지 않는다 - 프로세스가 스스로
+    답하는 수밖에 없다.
+    """
+    c, _, api = client
+
+    body = c.get("/healthz").json()["sessions"]
+    assert body == {
+        "sessions": 0,
+        "max_sessions": 4,
+        "ttl_seconds": int(api.sessions.ttl),
+        "reaper": True,
+    }
+
+    sid = _create(c)
+    assert c.get("/healthz").json()["sessions"]["sessions"] == 1
+
+    c.delete(f"/v1/edit-sessions/{sid}")
+    assert c.get("/healthz").json()["sessions"]["sessions"] == 0
+
+    api._reaper.stop()
+    assert c.get("/healthz").json()["sessions"]["reaper"] is False
+
+
 def test_sessions_from_different_clients_do_not_interfere(client):
     """서로 다른 세션은 독립이다 - 한쪽 편집이 다른 쪽에 보이지 않는다."""
     c, _, _ = client
