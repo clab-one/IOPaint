@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from loguru import logger
 
+from iopaint.admission import Admission
 from iopaint.helper import (
     decode_base64_to_image,
     pil_to_bytes,
@@ -92,8 +93,14 @@ def api_middleware(app: FastAPI):
                 )
             else:
                 traceback.print_exc()
+        # FOLIO 변경: 헤더를 버리지 않는다.
+        # upstream 핸들러는 status 와 body 만 돌려줘서 503 의 Retry-After 가
+        # 사라졌다. 클라이언트가 언제 다시 와야 하는지 모르면 즉시 재시도해
+        # 거절만 늘린다 - 입장 제어를 넣은 이유를 스스로 무너뜨린다.
         return JSONResponse(
-            status_code=vars(e).get("status_code", 500), content=jsonable_encoder(err)
+            status_code=vars(e).get("status_code", 500),
+            content=jsonable_encoder(err),
+            headers=getattr(e, "headers", None),
         )
 
     @app.middleware("http")
@@ -127,6 +134,10 @@ class Api:
         self.config = config
         self.router = APIRouter()
         self.queue_lock = threading.Lock()
+        # 무한 동시성이 컨테이너를 죽인다 - iopaint/admission.py 참조.
+        self.admission = Admission(
+            inflight=config.inflight, max_queue=config.max_queue
+        )
         api_middleware(self.app)
 
         self.plugins = self._build_plugins()
@@ -143,6 +154,12 @@ class Api:
         self.add_api_route("/api/v1/run_plugin_gen_image", self.api_run_plugin_gen_image, methods=["POST"])
         self.add_api_route("/api/v1/adjust_mask", self.api_adjust_mask, methods=["POST"])
         self.add_api_route("/api/v1/save_image", self.api_save_image, methods=["POST"])
+        # 프로브 전용. async 라 이벤트 루프에서 직접 답한다 - 추론이 점유한
+        # 스레드풀을 거치지 않는다. 이전 배포는 프로브가 /api/v1/server-config
+        # 를 쳤고, 그게 모델 매니저를 건드리는 sync 엔드포인트라 부하 중에
+        # 굶어 죽으면서 멀쩡한 컨테이너가 kill 됐다.
+        self.add_api_route("/healthz", self.api_healthz, methods=["GET"])
+        self.add_api_route("/readyz", self.api_readyz, methods=["GET"])
         # fmt: on
 
     def add_api_route(self, path: str, endpoint, **kwargs):
@@ -166,6 +183,26 @@ class Api:
         origin_image_bytes = file.file.read()
         with open(output_path, "wb") as fw:
             fw.write(origin_image_bytes)
+
+    async def api_healthz(self):
+        """살아 있는가. 바쁨은 죽음이 아니다 - 큐가 가득 차도 200 이다."""
+        return JSONResponse(
+            {
+                "ok": True,
+                "in_system": self.admission.present,
+                "capacity": self.admission.inflight + self.admission.max_queue,
+            }
+        )
+
+    async def api_readyz(self):
+        """요청을 받을 수 있는가.
+
+        적재 여부만 본다. 혼잡을 not-ready 로 답하면 엔드포인트가 Service 에서
+        빠지고, 그 순간 남은 요청까지 connection refused 가 된다 - 혼잡을
+        장애로 승격시키는 짓이다. 혼잡은 503 으로 답할 일이지 이탈할 일이 아니다.
+        """
+        ready = self.model_manager is not None
+        return JSONResponse({"ready": ready}, status_code=200 if ready else 503)
 
     def api_current_model(self) -> ModelInfo:
         return self.model_manager.current_model
@@ -211,6 +248,10 @@ class Api:
         )
 
     def api_inpaint(self, req: InpaintRequest):
+        with self.admission.admit():
+            return self._api_inpaint(req)
+
+    def _api_inpaint(self, req: InpaintRequest):
         image, alpha_channel, infos, ext = decode_base64_to_image(req.image)
         mask, _, _, _ = decode_base64_to_image(req.mask, gray=True)
         logger.info(f"image ext: {ext}")
@@ -240,6 +281,10 @@ class Api:
         return Response(content=res_img_bytes, media_type=f"image/{ext}")
 
     def api_run_plugin_gen_image(self, req: RunPluginRequest):
+        with self.admission.admit():
+            return self._api_run_plugin_gen_image(req)
+
+    def _api_run_plugin_gen_image(self, req: RunPluginRequest):
         ext = "png"
         if req.name not in self.plugins:
             raise HTTPException(status_code=422, detail="Plugin not found")
@@ -268,6 +313,10 @@ class Api:
         )
 
     def api_run_plugin_gen_mask(self, req: RunPluginRequest):
+        with self.admission.admit():
+            return self._api_run_plugin_gen_mask(req)
+
+    def _api_run_plugin_gen_mask(self, req: RunPluginRequest):
         if req.name not in self.plugins:
             raise HTTPException(status_code=422, detail="Plugin not found")
         if not self.plugins[req.name].support_gen_mask:

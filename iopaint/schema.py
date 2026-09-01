@@ -99,6 +99,9 @@ class ApiConfig(BaseModel):
     low_mem: bool
     device: Device
     output_dir: Optional[Path]
+    # 입장 제어. iopaint/admission.py 참조.
+    inflight: int
+    max_queue: int
     quality: int
     enable_interactive_seg: bool
     interactive_seg_model: InteractiveSegModel

@@ -44,6 +44,8 @@ def start(
     low_mem: bool = Option(False, help="Enable attention slicing to save memory."),
     no_half: bool = Option(False, help=NO_HALF_HELP),
     device: Device = Option(Device.cpu),
+    inflight: int = Option(1, help=INFLIGHT_HELP),
+    max_queue: int = Option(8, help=MAX_QUEUE_HELP),
     output_dir: Optional[Path] = Option(
         None, help=OUTPUT_DIR_HELP, dir_okay=True, file_okay=False
     ),
@@ -99,6 +101,8 @@ def start(
         low_mem=low_mem,
         device=device,
         output_dir=output_dir,
+        inflight=inflight,
+        max_queue=max_queue,
         quality=quality,
         enable_interactive_seg=enable_interactive_seg,
         interactive_seg_model=interactive_seg_model,

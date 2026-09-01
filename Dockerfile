@@ -37,9 +37,9 @@ USER folio
 
 EXPOSE 8080
 
-# 모델 적재까지 끝나야 준비된 것이다. server-config 가 적재된 모델을 답한다.
+# 프로브 전용 경로. 작업 스레드풀을 거치지 않는다.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if b'lama' in urllib.request.urlopen('http://127.0.0.1:8080/api/v1/server-config',timeout=4).read() else 1)"
+    CMD python -c "import urllib.request,sys; sys.exit(0 if b'true' in urllib.request.urlopen('http://127.0.0.1:8080/readyz',timeout=4).read() else 1)"
 
 ENTRYPOINT ["iopaint", "start"]
 CMD ["--model=lama", "--device=cpu", "--host=0.0.0.0", "--port=8080", "--model-dir=/models"]

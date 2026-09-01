@@ -43,6 +43,9 @@ spec:
             - --host=0.0.0.0
             - --port=8080
             - --model-dir=/models
+            # 입장 제어. 무한 동시성이 컨테이너를 죽였다 - iopaint/admission.py.
+            - --inflight=1
+            - --max-queue=8
           ports:
             - name: http
               containerPort: 8080
@@ -79,16 +82,22 @@ spec:
             limits:
               cpu: "8"
               memory: 16Gi
+          # 프로브는 /healthz · /readyz 를 쓴다. 이전에는 셋 다
+          # /api/v1/server-config 를 쳤는데, 그건 모델 매니저를 건드리는 sync
+          # 엔드포인트라 부하 중 스레드풀에 갇혀 굶었다. 100건 버스트에서
+          # liveness 가 3회 실패해 멀쩡한 컨테이너가 kill 됐다.
           startupProbe:
             # 이미지에 가중치가 구워져 있어도 torch.jit 적재에 시간이 걸린다.
-            httpGet: { path: /api/v1/server-config, port: http }
+            httpGet: { path: /readyz, port: http }
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
-            httpGet: { path: /api/v1/server-config, port: http }
+            httpGet: { path: /readyz, port: http }
             periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /api/v1/server-config, port: http }
+            # 바쁨은 죽음이 아니다. /healthz 는 혼잡해도 200 이고,
+            # 혼잡은 요청 쪽에서 503 + Retry-After 로 답한다.
+            httpGet: { path: /healthz, port: http }
             periodSeconds: 30
             failureThreshold: 3
           volumeMounts:
