@@ -38,6 +38,7 @@ from iopaint.helper import (
     adjust_mask,
 )
 from iopaint.model.utils import torch_gc
+from iopaint.scheduler import LocalBackend, Scheduler, build_remote
 from iopaint.session import Reaper, SessionError, SessionStore
 from iopaint.model_manager import ModelManager
 from iopaint.plugins import build_plugins, RealESRGANUpscaler, InteractiveSeg
@@ -163,6 +164,15 @@ class Api:
         self._reaper = Reaper(self.sessions)
         self._reaper.start()
 
+        # 추론 분배 (AI-004). 원격 노드는 인증서가 있을 때만 생긴다 -
+        # 없으면 로컬만으로 완전히 동작한다.
+        self.scheduler = Scheduler(
+            LocalBackend(
+                self.model_manager, lambda: InpaintRequest(image="", mask="")
+            ),
+            build_remote(),
+        )
+
         # fmt: off
         self.add_api_route("/api/v1/server-config", self.api_server_config, methods=["GET"],
                            response_model=ServerConfigResponse)
@@ -265,13 +275,13 @@ class Api:
                         detail=f"Image size({image.shape[:2]}) and mask size({mask_np.shape[:2]}) not match.",
                     )
 
-                req = InpaintRequest(image="", mask="")
                 start = time.time()
-                rgb_np_img = self.model_manager(image, mask_np, req)
+                rgb_np_img, backend = self.scheduler.erase(image, mask_np)
                 elapsed = (time.time() - start) * 1000
                 torch_gc()
 
-                rgb_np_img = cv2.cvtColor(rgb_np_img.astype(np.uint8), cv2.COLOR_BGR2RGB)
+                # 여기서 변환하지 않는다. 스케줄러 경계가 이미 RGB 다 -
+                # 백엔드마다 색 규약이 달라 M4 경로의 R/B 가 뒤집혔었다.
                 rgb_res = concat_alpha_channel(rgb_np_img, alpha_channel)
                 out = pil_to_bytes(
                     Image.fromarray(rgb_res), ext="png", quality=self.config.quality,
@@ -282,9 +292,15 @@ class Api:
                 tmp.write_bytes(out)
                 os.replace(tmp, s.working)
                 s.ops += 1
-                logger.info(f"session {sid}: erase #{s.ops} {elapsed:.0f}ms")
+                logger.info(
+                    f"session {sid}: erase #{s.ops} {elapsed:.0f}ms via {backend}"
+                )
 
-        return JSONResponse({"id": sid, "ops": s.ops, "ms": round(elapsed)})
+        # 어느 노드가 처리했는지 알려준다. 클라이언트가 쓰지는 않지만,
+        # 스케줄러가 실제로 분배하는지 밖에서 확인할 방법이 이것뿐이다.
+        return JSONResponse(
+            {"id": sid, "ops": s.ops, "ms": round(elapsed), "backend": backend}
+        )
 
     def api_session_result(self, sid: str):
         """현재 working 을 그대로 준다.
@@ -320,6 +336,8 @@ class Api:
                 # reaper 는 데몬 스레드라 조용히 죽을 수 있고, Python 3.12 는
                 # 스레드 이름을 OS 에 붙이지 않아 /proc 으로도 확인이 안 된다.
                 "sessions": {**self.sessions.stats(), "reaper": self._reaper.alive},
+                # 어느 노드가 얼마나 빠른지. 스케줄러가 이 값으로 고른다.
+                "backends": self.scheduler.stats(),
             }
         )
 

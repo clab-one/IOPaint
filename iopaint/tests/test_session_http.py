@@ -48,7 +48,11 @@ class _CountingModel:
             self.calls += 1
         if self.delay:
             time.sleep(self.delay)
-        return np.clip(image.astype(np.int32) + 10, 0, 255).astype(np.uint8)
+        # LaMa 와 같은 규약으로 답한다: **BGR**. 입력은 RGB 로 들어오므로
+        # 뒤집어서 돌려줘야 실제 모델과 같은 모양이 된다. 이걸 대칭 색으로
+        # 두면 R/B 뒤집힘 버그가 테스트를 그대로 통과한다.
+        rgb = np.clip(image.astype(np.int32) + 10, 0, 255).astype(np.uint8)
+        return rgb[..., ::-1].copy()
 
 
 @pytest.fixture
@@ -240,6 +244,21 @@ def test_session_limit_is_enforced_over_http(client):
         "/v1/edit-sessions", files={"file": ("p.png", _png((0, 0, 0)), "image/png")}
     )
     assert r.status_code == 503
+
+
+def test_colors_survive_the_round_trip(client):
+    """채널이 뒤집히지 않는다.
+
+    가짜 모델은 실제 LaMa 처럼 BGR 로 답한다. 스케줄러 경계에서 RGB 로
+    정규화되고 API 가 다시 변환하지 않아야 원래 색이 나온다. 한때 백엔드마다
+    규약이 달라 M4 경로만 R/B 가 뒤집혔었다 - 대칭 색으로는 안 잡힌다.
+    """
+    c, _, _ = client
+    sid = _create(c, _png((90, 40, 10)))  # R≠G≠B
+
+    assert _erase(c, sid).status_code == 200
+
+    assert _pixel(c, sid) == (100, 50, 20), "채널이 뒤집혔다"
 
 
 def test_healthz_reports_session_state(client):

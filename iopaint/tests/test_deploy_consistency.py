@@ -107,6 +107,25 @@ def test_prefetch_init_container_has_the_module_to_run(deployment):
     )
 
 
+def test_coreml_url_comes_with_client_certificates(deployment):
+    """원격 노드를 켰으면 인증서도 붙어 있어야 한다.
+
+    M4 워커는 mTLS 로만 답한다. URL 만 주고 인증서를 안 붙이면 모든 요청이
+    핸드셰이크에서 실패하고, 스케줄러는 매번 로컬로 되돌린다 - 조용히 느려질
+    뿐 아무도 모른다. 가중치 출처와 같은 종류의 어긋남이다.
+    """
+    for c in _pod_spec(deployment).get("containers", []):
+        env = {e["name"]: e.get("value") for e in c.get("env", [])}
+        if "FOLIO_COREML_URL" not in env:
+            continue
+        mounts = [m.get("mountPath") for m in c.get("volumeMounts", [])]
+        pki = env.get("FOLIO_COREML_CA", "/pki/ca.crt").rsplit("/", 1)[0]
+        assert pki in mounts, (
+            f"FOLIO_COREML_URL 이 설정됐는데 인증서 경로 {pki} 가 마운트되지 "
+            "않았다. mTLS 핸드셰이크가 매번 실패하고 조용히 로컬로 되돌아간다."
+        )
+
+
 def test_prefetch_init_does_not_mount_over_its_own_seed(deployment):
     """initContainer 가 이미지의 baked 경로를 PVC 로 덮어쓰지 않는가.
 
