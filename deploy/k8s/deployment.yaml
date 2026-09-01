@@ -116,6 +116,26 @@ spec:
               value: "8"
             - name: MKL_NUM_THREADS
               value: "8"
+            # 두 번째 실행 자원 - M4 Max 의 Core ML 워커.
+            #
+            # 클러스터 밖이다. Kubernetes 노드로 넣지 않은 이유는 Core ML 이
+            # macOS 사용자 세션에서만 ANE 를 쓸 수 있어서다. launchd 로 돌고
+            # LAN 으로 부른다 - one.clab.folio.coreml-worker.
+            #
+            # 이건 힌트지 의존이 아니다. 워커가 꺼지면 스케줄러가 그 자리에서
+            # 로컬로 되돌리고, 사용자는 느려질 뿐 세션이 깨지지 않는다.
+            # 800² 기준 2870ms 대 142ms 라 켜질 때의 차이가 크다.
+            - name: FOLIO_COREML_URL
+              value: https://219.255.103.226:18443
+            # 워커는 mTLS 로만 답한다. 이 셋이 빠지면 핸드셰이크가 매번
+            # 실패하고 조용히 로컬로만 돈다 - test_deploy_consistency 가
+            # URL 과 인증서가 함께 있는지 본다.
+            - name: FOLIO_COREML_CA
+              value: /pki/ca.crt
+            - name: FOLIO_COREML_CERT
+              value: /pki/client.crt
+            - name: FOLIO_COREML_KEY
+              value: /pki/client.key
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
@@ -158,6 +178,9 @@ spec:
             # 보이는 결과는 같다. 3단계에서 bake 를 지우면 이것만 남는다.
             - name: models
               mountPath: /models
+            - name: pki
+              mountPath: /pki
+              readOnly: true
       volumes:
         # 계획 11 절: 편집 세션은 tmpfs 에만 산다. 디스크에 남기지 않고 TTL 이나
         # Done 으로 사라진다. sizeLimit 은 상한이지 예약이 아니라 비어 있으면 0 이다.
@@ -175,3 +198,17 @@ spec:
         - name: models
           persistentVolumeClaim:
             claimName: folio-ai-models
+        # M4 워커를 부를 클라이언트 인증서. ghcr-pull 과 같은 관례로 git 이
+        # 아니라 out-of-band 로 만든다:
+        #
+        #   kubectl -n folio-ai create secret generic folio-coreml-client \
+        #     --from-file=ca.crt=... --from-file=client.crt=... \
+        #     --from-file=client.key=...
+        #
+        # optional 로 두지 않는다. 없으면 파드가 뜨지 않는 편이, 인증서 없이
+        # 떠서 매번 핸드셰이크에 실패하며 조용히 느려지는 것보다 낫다.
+        - name: pki
+          secret:
+            secretName: folio-coreml-client
+            # 개인키다. 소유자만 읽는다.
+            defaultMode: 0400
