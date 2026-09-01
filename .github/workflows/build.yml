@@ -1,7 +1,11 @@
 # folio-iopaint 이미지 빌드 → GHCR → digest 고정 커밋.
 #
-# clab-cluster 의 셀프호스티드 러너에서 돈다. Argo CD 는 아래 digest 커밋을
-# 따라 롤아웃하므로, 이 워크플로가 배포의 유일한 경로다.
+# GitHub 호스티드 러너에서 돈다. 이 저장소는 public 이고, clab-cluster 의
+# 셀프호스티드 러너는 private 저장소에만 붙인다 - public 에 붙이면 fork PR 이
+# 워크플로를 고쳐 노드에서 임의 코드를 돌릴 경로가 열리고 Free 플랜에는 그것을
+# 막을 runner group 이 없다. public 저장소는 호스티드가 무료이므로 손해도 없다.
+#
+# Argo CD 는 아래 digest 커밋을 따라 롤아웃한다. 이 워크플로가 배포의 유일한 경로다.
 name: build
 
 on:
@@ -28,7 +32,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: clab-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,9 +45,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/setup-buildx-action@v3
-        with:
-          driver: remote
-          endpoint: tcp://buildkitd.arc-build.svc.cluster.local:1234
 
       - id: build
         uses: docker/build-push-action@v6

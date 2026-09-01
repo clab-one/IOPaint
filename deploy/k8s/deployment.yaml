@@ -24,8 +24,8 @@ spec:
       labels:
         app: folio-ai-edit
     spec:
-      imagePullSecrets:
-        - name: ghcr-pull
+      # imagePullSecrets 없음: 이 저장소가 public 이라 GHCR 패키지도 public 이다.
+      # 이미지에 든 것은 이미 공개된 fork 코드와 Apache-2.0 LaMa 가중치뿐이다.
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
