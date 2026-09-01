@@ -1,53 +1,42 @@
 import setuptools
 from pathlib import Path
 
-package_files = Path("iopaint/web_app").glob("**/*")
-package_files = [str(it).replace("iopaint/", "") for it in package_files]
-package_files += ["model/anytext/ocr_recog/ppocr_keys_v1.txt"]
-package_files += ["model/anytext/anytext_sd15.yaml"]
-package_files += ["model/original_sd_configs/sd_xl_base.yaml"]
-package_files += ["model/original_sd_configs/sd_xl_refiner.yaml"]
-package_files += ["model/original_sd_configs/v1-inference.yaml"]
-package_files += ["model/original_sd_configs/v2-inference-v.yaml"]
-
-
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 
 def load_requirements():
-    requirements_file_name = "requirements.txt"
+    # FOLIO fork: 원본은 빈 줄과 주석까지 그대로 넘겨서 requirements.txt 에
+    # 설명을 못 달았다.
     requires = []
-    with open(requirements_file_name) as f:
-        for line in f:
-            if line:
-                requires.append(line.strip())
+    for line in Path("requirements.txt").read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            requires.append(line)
     return requires
 
 
 # https://setuptools.readthedocs.io/en/latest/setuptools.html#including-data-files
 setuptools.setup(
-    name="IOPaint",
-    version="1.6.0",
+    name="folio-iopaint",
+    version="1.6.0+folio.1",
     author="PanicByte",
     author_email="cwq1913@gmail.com",
-    description="Image inpainting, outpainting tool powered by SOTA AI Model",
+    description="FOLIO fork of IOPaint: headless erase (LaMa) service, no web UI, no diffusion",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Sanster/IOPaint",
+    url="https://github.com/clab-one/IOPaint",
     packages=setuptools.find_packages("."),
-    package_data={"iopaint": package_files},
     install_requires=load_requirements(),
-    python_requires=">=3.7",
+    python_requires=">=3.10",
     entry_points={"console_scripts": ["iopaint=iopaint:entry_point"]},
     classifiers=[
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
 )

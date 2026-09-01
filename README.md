@@ -1,138 +1,66 @@
-<h1 align="center">IOPaint</h1>
-<p align="center">A free and open-source inpainting & outpainting tool powered by SOTA AI model.</p>
+# folio-iopaint
 
-<p align="center">
-  <a href="https://github.com/Sanster/IOPaint">
-    <img alt="total download" src="https://pepy.tech/badge/iopaint" />
-  </a>
-  <a href="https://pypi.org/project/iopaint">
-    <img alt="version" src="https://img.shields.io/pypi/v/iopaint" />
-  </a>
-  <a href="">
-    <img alt="python version" src="https://img.shields.io/pypi/pyversions/iopaint" />
-  </a>
-  <a href="https://huggingface.co/spaces/Sanster/iopaint-lama">
-    <img alt="HuggingFace Spaces" src="https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Spaces-blue" />
-  </a>
-  <a href="https://colab.research.google.com/drive/1TKVlDZiE3MIZnAUMpv2t_S4hLr6TUY1d?usp=sharing">
-    <img alt="Open in Colab" src="https://colab.research.google.com/assets/colab-badge.svg" />
-  </a>
-</p>
+FOLIO 의 AI 편집 서버. [Sanster/IOPaint](https://github.com/Sanster/IOPaint) 를
+fork 해 **웹 UI 와 diffusion 계열을 전부 들어내고 지우기(LaMa) 하나만 남긴**
+브랜치다 (`folio-vendor`). 라이선스는 upstream 그대로 Apache-2.0.
 
-|Erase([LaMa](https://www.iopaint.com/models/erase/lama))|Replace Object([PowerPaint](https://www.iopaint.com/models/diffusion/powerpaint))|
-|-----|----|
-|<video src="https://github.com/Sanster/IOPaint/assets/3998421/264bc27c-0abd-4d8b-bb1e-0078ab264c4a">  | <video src="https://github.com/Sanster/IOPaint/assets/3998421/1de5c288-e0e1-4f32-926d-796df0655846">|
-
-|Draw Text([AnyText](https://www.iopaint.com/models/diffusion/anytext))|Out-painting([PowerPaint](https://www.iopaint.com/models/diffusion/powerpaint))|
-|---------|-----------|
-|<video src="https://github.com/Sanster/IOPaint/assets/3998421/ffd4eda4-f7d4-4693-93d8-d2cd5aa7c6d6">|<video src="https://github.com/Sanster/IOPaint/assets/3998421/c4af8aef-8c29-49e0-96eb-0aae2f768da2">|
-
-
-## Features
-
-- Completely free and open-source, fully self-hosted, support CPU & GPU & Apple Silicon
-- [Windows 1-Click Installer](https://www.iopaint.com/install/windows_1click_installer)
-- [OptiClean](https://apps.apple.com/ca/app/opticlean/id6452387177): macOS & iOS App for object erase
-- Supports various AI [models](https://www.iopaint.com/models) to perform erase, inpainting or outpainting task.
-  - [Erase models](https://www.iopaint.com/models#erase-models): These models can be used to remove unwanted object, defect, watermarks, people from image.
-  - Diffusion models: These models can be used to replace objects or perform outpainting. Some popular used models include:
-    - [runwayml/stable-diffusion-inpainting](https://huggingface.co/runwayml/stable-diffusion-inpainting)
-    - [diffusers/stable-diffusion-xl-1.0-inpainting-0.1](https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1)
-    - [andregn/Realistic_Vision_V3.0-inpainting](https://huggingface.co/andregn/Realistic_Vision_V3.0-inpainting)
-    - [Lykon/dreamshaper-8-inpainting](https://huggingface.co/Lykon/dreamshaper-8-inpainting)
-    - [Sanster/anything-4.0-inpainting](https://huggingface.co/Sanster/anything-4.0-inpainting)
-    - [BrushNet](https://www.iopaint.com/models/diffusion/brushnet)
-    - [PowerPaintV2](https://www.iopaint.com/models/diffusion/powerpaint_v2)
-    - [Sanster/AnyText](https://huggingface.co/Sanster/AnyText)
-    - [Fantasy-Studio/Paint-by-Example](https://huggingface.co/Fantasy-Studio/Paint-by-Example)
-
-- [Plugins](https://www.iopaint.com/plugins):
-  - [Segment Anything](https://iopaint.com/plugins/interactive_seg): Accurate and fast Interactive Object Segmentation
-  - [RemoveBG](https://iopaint.com/plugins/rembg): Remove image background or generate masks for foreground objects
-  - [Anime Segmentation](https://iopaint.com/plugins/anime_seg): Similar to RemoveBG, the model is specifically trained for anime images.
-  - [RealESRGAN](https://iopaint.com/plugins/RealESRGAN): Super Resolution
-  - [GFPGAN](https://iopaint.com/plugins/GFPGAN): Face Restoration
-  - [RestoreFormer](https://iopaint.com/plugins/RestoreFormer): Face Restoration
-- [FileManager](https://iopaint.com/file_manager): Browse your pictures conveniently and save them directly to the output directory.
-
-
-## Quick Start
-
-### Start webui
-
-IOPaint provides a convenient webui for using the latest AI models to edit your images.
-You can install and start IOPaint easily by running following command:
-
-```bash
-# In order to use GPU, install cuda version of pytorch first.
-# pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118
-# AMD GPU users, please utilize the following command, only works on linux, as pytorch is not yet supported on Windows with ROCm.
-# pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/rocm5.6
-
-pip3 install iopaint
-iopaint start --model=lama --device=cpu --port=8080
+```
+iopaint start --model=lama --device=cpu --host=0.0.0.0 --port=8080
 ```
 
-That's it, you can start using IOPaint by visiting http://localhost:8080 in your web browser.
+정적 파일을 서빙하지 않는다. `/` 는 404 다.
 
-All models will be downloaded automatically at startup. If you want to change the download directory, you can add `--model-dir`. More documentation can be found [here](https://www.iopaint.com/install/download_model)
+## 남은 API
 
-You can see other supported models at [here](https://www.iopaint.com/models) and how to use local sd ckpt/safetensors file at [here](https://www.iopaint.com/models#load-ckptsafetensors).
+| 메서드 | 경로 | 하는 일 |
+|---|---|---|
+| `POST` | `/api/v1/inpaint` | 이미지 + 마스크 → 지운 이미지 |
+| `GET` | `/api/v1/server-config` | 적재된 모델·플러그인 |
+| `GET` `POST` | `/api/v1/model` | 현재 모델 조회·전환 |
+| `POST` | `/api/v1/run_plugin_gen_mask` | 플러그인 마스크 생성 (segmentation) |
+| `POST` | `/api/v1/run_plugin_gen_image` | 플러그인 이미지 생성 (upscale, restore, remove-bg) |
+| `POST` | `/api/v1/switch_plugin_model` | 플러그인 모델 전환 |
+| `POST` | `/api/v1/adjust_mask` | 마스크 확장/축소/반전 |
+| `POST` | `/api/v1/save_image` | 출력 디렉터리에 저장 |
 
-### Plugins
+FOLIO 의 edit-session API(`/v1/edit-sessions/...`)는 이 위에 AI-003 에서
+올린다. 여기 있는 것은 upstream 계약 그대로다.
 
-You can specify which plugins to use when starting the service, and you can view the commands to enable plugins by using `iopaint start --help`. 
+## 들어낸 것
 
-More demonstrations of the Plugin can be seen [here](https://www.iopaint.com/plugins)
+| | 왜 |
+|---|---|
+| `web_app/` 정적 프런트엔드, `/` 마운트 | FOLIO 의 화면은 iOS 앱이다 |
+| `web_config.py` (gradio), `installer.py` | 서버에 설정 UI·플러그인 설치기를 두지 않는다 |
+| `file_manager/`, `--input` 디렉터리 모드, `/api/v1/inputimage` | 서버는 사진을 보관하지 않는다. 세션은 tmpfs 다 |
+| Stable Diffusion · SDXL · ControlNet · BrushNet · PowerPaint · AnyText · Kandinsky · PaintByExample · InstructPix2Pix | 생성이 아니라 지우기다 |
+| LDM · ZITS · MAT · FcF · MIGAN · OpenCV2 · Manga · AnimeLaMa · anime_seg | 지우기 모델을 하나로 고정한다. 품질 기준은 LaMa |
+| socket.io `diffusion_progress` 스트림 | LaMa 는 단일 forward 라 흘려보낼 step 이 없다 |
+| `InpaintRequest` 의 prompt·sampler·seed·croper·extender·lcm-lora 등 | 지우기 경로가 읽지 않는 필드 |
+| `model/utils.py` 의 스케줄러 어댑터와 StyleGAN 연산 1000여 줄 | 위 모델들이 쓰던 것 |
+| `iopaint download` · `list` · `run`(배치) · `start-web-config` | 서버는 헤드리스로만 뜬다 |
 
-```bash
-iopaint start --enable-interactive-seg --interactive-seg-device=cuda
+`InpaintRequest.sd_keep_unmasked_area` 는 `keep_unmasked_area` 로 바꿨다.
+diffusion 이 없는데 `sd_` 접두사를 남길 이유가 없다.
+
+## 남긴 플러그인 계층
+
+`interactive_seg`(SAM/SAM-HQ/SAM2) · `realesrgan` · `gfpgan` ·
+`restoreformer` · `remove_bg` 는 그대로 뒀다. FOLIO 의 wave 2-5
+(자동 물체 선택 → 화질 개선 → 얼굴 복원 → 배경 제거)가 이 위에 붙는다.
+
+## 검증
+
+```
+uv venv --python 3.12 .venv && VIRTUAL_ENV=.venv uv pip install -e .
+.venv/bin/python -m pytest iopaint/tests --ignore=iopaint/tests/test_plugins.py -k "not cuda and not mps"
 ```
 
-### Batch processing
+`test_plugins.py` 는 플러그인 모델 가중치를 내려받으므로 wave 2 이후에 돈다.
 
-You can also use IOPaint in the command line to batch process images:
+## 출처
 
-```bash
-iopaint run --model=lama --device=cpu \
---image=/path/to/image_folder \
---mask=/path/to/mask_folder \
---output=output_dir
-```
-
-`--image` is the folder containing input images, `--mask` is the folder containing corresponding mask images.
-When `--mask` is a path to a mask file, all images will be processed using this mask.
-
-You can see more information about the available models and plugins supported by IOPaint below.
-
-## Development
-
-Install [nodejs](https://nodejs.org/en), then install the frontend dependencies.
-
-```bash
-git clone https://github.com/Sanster/IOPaint.git
-cd IOPaint/web_app
-npm install
-npm run build
-cp -r dist/ ../iopaint/web_app
-```
-
-Create a `.env.local` file in `web_app` and fill in the backend IP and port.
-```
-VITE_BACKEND=http://127.0.0.1:8080
-```
-
-Start front-end development environment
-```bash
-npm run dev
-```
-
-Install back-end requirements and start backend service
-```bash
-pip install -r requirements.txt
-python3 main.py start --model lama --port 8080
-```
-
-Then you can visit `http://localhost:5173/` for development.
-The frontend code will automatically update after being modified,
-but the backend needs to restart the service after modifying the python code.
+- upstream: `Sanster/IOPaint` `main` `61a759fb` (2025-04-29, 아카이브됨)
+- 참고: `daraskme/IOpaint` `modernize-2026` `27b6ea66` — fork 가 아니라 별도
+  업로드라 merge 계보가 없다. 현대화 커밋은 참고만 한다
+- 라이선스: Apache-2.0 (`LICENSE`)

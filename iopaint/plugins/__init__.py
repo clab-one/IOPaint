@@ -2,7 +2,6 @@ from typing import Dict
 
 from loguru import logger
 
-from .anime_seg import AnimeSeg
 from .gfpgan_plugin import GFPGANPlugin
 from .interactive_seg import InteractiveSeg
 from .realesrgan import RealESRGANUpscaler
@@ -18,7 +17,6 @@ def build_plugins(
     enable_remove_bg: bool,
     remove_bg_device: Device,
     remove_bg_model: str,
-    enable_anime_seg: bool,
     enable_realesrgan: bool,
     realesrgan_device: Device,
     realesrgan_model: RealESRGANModel,
@@ -38,10 +36,6 @@ def build_plugins(
     if enable_remove_bg:
         logger.info(f"Initialize {RemoveBG.name} plugin")
         plugins[RemoveBG.name] = RemoveBG(remove_bg_model, remove_bg_device)
-
-    if enable_anime_seg:
-        logger.info(f"Initialize {AnimeSeg.name} plugin")
-        plugins[AnimeSeg.name] = AnimeSeg()
 
     if enable_realesrgan:
         logger.info(

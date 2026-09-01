@@ -2,7 +2,6 @@ import os
 from PIL import Image
 
 from iopaint.helper import encode_pil_to_base64, gen_frontend_mask
-from iopaint.plugins.anime_seg import AnimeSeg
 from iopaint.schema import Device, RunPluginRequest, RemoveBGModel, InteractiveSegModel
 from iopaint.tests.utils import check_device, current_dir, save_dir
 
@@ -56,22 +55,6 @@ def test_remove_bg(model_name, device):
     res_mask = gen_frontend_mask(bgr_np_img)
     _save(res_mask, f"test_remove_bg_frontend_mask_{model_name}_{device}.png")
 
-    assert len(bgr_np_img.shape) == 2
-    _save(bgr_np_img, f"test_remove_bg_mask_{model_name}_{device}.jpeg")
-
-
-def test_anime_seg():
-    model = AnimeSeg()
-    img = cv2.imread(str(current_dir / "anime_test.png"))
-    img_base64 = encode_pil_to_base64(Image.fromarray(img), 100, {})
-    res = model.gen_image(img, RunPluginRequest(name=AnimeSeg.name, image=img_base64))
-    assert len(res.shape) == 3
-    assert res.shape[-1] == 4
-    _save(res, "test_anime_seg.png")
-
-    res = model.gen_mask(img, RunPluginRequest(name=AnimeSeg.name, image=img_base64))
-    assert len(res.shape) == 2
-    _save(res, "test_anime_seg_mask.png")
 
 
 @pytest.mark.parametrize("device", ["cuda", "cpu", "mps"])

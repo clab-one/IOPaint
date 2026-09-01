@@ -3,7 +3,7 @@ import cv2
 import pytest
 import torch
 
-from iopaint.schema import LDMSampler, HDStrategy, InpaintRequest, SDSampler
+from iopaint.schema import HDStrategy, InpaintRequest
 import numpy as np
 
 current_dir = Path(__file__).parent.absolute().resolve()
@@ -65,13 +65,12 @@ def get_data(
 
 def get_config(**kwargs):
     data = dict(
-        sd_sampler=kwargs.get("sd_sampler", SDSampler.uni_pc),
-        ldm_steps=1,
-        ldm_sampler=LDMSampler.plms,
         hd_strategy=kwargs.get("strategy", HDStrategy.ORIGINAL),
         hd_strategy_crop_margin=32,
         hd_strategy_crop_trigger_size=200,
         hd_strategy_resize_limit=200,
     )
     data.update(**kwargs)
+    # FOLIO fork: `strategy` 는 호출자 어휘이고 요청 필드가 아니다.
+    data.pop("strategy", None)
     return InpaintRequest(image="", mask="", **data)

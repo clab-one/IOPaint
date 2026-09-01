@@ -1,14 +1,12 @@
-import asyncio
 import os
 import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Dict
 
 import cv2
 import numpy as np
-import socketio
 import torch
 
 try:
@@ -26,14 +24,10 @@ from fastapi import APIRouter, FastAPI, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, Response
 from loguru import logger
-from socketio import AsyncServer
 
-from iopaint.file_manager import FileManager
 from iopaint.helper import (
-    load_img,
     decode_base64_to_image,
     pil_to_bytes,
     numpy_to_bytes,
@@ -47,13 +41,11 @@ from iopaint.plugins import build_plugins, RealESRGANUpscaler, InteractiveSeg
 from iopaint.plugins.base_plugin import BasePlugin
 from iopaint.plugins.remove_bg import RemoveBG
 from iopaint.schema import (
-    GenInfoResponse,
     ApiConfig,
     ServerConfigResponse,
     SwitchModelRequest,
     InpaintRequest,
     RunPluginRequest,
-    SDSampler,
     PluginInfo,
     AdjustMaskRequest,
     RemoveBGModel,
@@ -62,9 +54,6 @@ from iopaint.schema import (
     InteractiveSegModel,
     RealESRGANModel,
 )
-
-CURRENT_DIR = Path(__file__).parent.absolute().resolve()
-WEB_APP_DIR = CURRENT_DIR / "web_app"
 
 
 def api_middleware(app: FastAPI):
@@ -132,19 +121,6 @@ def api_middleware(app: FastAPI):
     app.add_middleware(CORSMiddleware, **cors_options)
 
 
-global_sio: AsyncServer = None
-
-
-def diffuser_callback(pipe, step: int, timestep: int, callback_kwargs: Dict = {}):
-    # self: DiffusionPipeline, step: int, timestep: int, callback_kwargs: Dict
-    # logger.info(f"diffusion callback: step={step}, timestep={timestep}")
-
-    # We use asyncio loos for task processing. Perhaps in the future, we can add a processing queue similar to InvokeAI,
-    # but for now let's just start a separate event loop. It shouldn't make a difference for single person use
-    asyncio.run(global_sio.emit("diffusion_progress", {"step": step}))
-    return {}
-
-
 class Api:
     def __init__(self, app: FastAPI, config: ApiConfig):
         self.app = app
@@ -153,32 +129,21 @@ class Api:
         self.queue_lock = threading.Lock()
         api_middleware(self.app)
 
-        self.file_manager = self._build_file_manager()
         self.plugins = self._build_plugins()
         self.model_manager = self._build_model_manager()
 
         # fmt: off
-        self.add_api_route("/api/v1/gen-info", self.api_geninfo, methods=["POST"], response_model=GenInfoResponse)
         self.add_api_route("/api/v1/server-config", self.api_server_config, methods=["GET"],
                            response_model=ServerConfigResponse)
         self.add_api_route("/api/v1/model", self.api_current_model, methods=["GET"], response_model=ModelInfo)
         self.add_api_route("/api/v1/model", self.api_switch_model, methods=["POST"], response_model=ModelInfo)
-        self.add_api_route("/api/v1/inputimage", self.api_input_image, methods=["GET"])
         self.add_api_route("/api/v1/inpaint", self.api_inpaint, methods=["POST"])
         self.add_api_route("/api/v1/switch_plugin_model", self.api_switch_plugin_model, methods=["POST"])
         self.add_api_route("/api/v1/run_plugin_gen_mask", self.api_run_plugin_gen_mask, methods=["POST"])
         self.add_api_route("/api/v1/run_plugin_gen_image", self.api_run_plugin_gen_image, methods=["POST"])
-        self.add_api_route("/api/v1/samplers", self.api_samplers, methods=["GET"])
         self.add_api_route("/api/v1/adjust_mask", self.api_adjust_mask, methods=["POST"])
         self.add_api_route("/api/v1/save_image", self.api_save_image, methods=["POST"])
-        self.app.mount("/", StaticFiles(directory=WEB_APP_DIR, html=True), name="assets")
         # fmt: on
-
-        global global_sio
-        self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
-        self.combined_asgi_app = socketio.ASGIApp(self.sio, self.app)
-        self.app.mount("/ws", self.combined_asgi_app)
-        global_sio = self.sio
 
     def add_api_route(self, path: str, endpoint, **kwargs):
         return self.app.add_api_route(path, endpoint, **kwargs)
@@ -242,31 +207,8 @@ class Api:
             realesrganModels=RealESRGANModel.values(),
             interactiveSegModel=self.config.interactive_seg_model,
             interactiveSegModels=InteractiveSegModel.values(),
-            enableFileManager=self.file_manager is not None,
             enableAutoSaving=self.config.output_dir is not None,
-            enableControlnet=self.model_manager.enable_controlnet,
-            controlnetMethod=self.model_manager.controlnet_method,
-            disableModelSwitch=False,
-            isDesktop=False,
-            samplers=self.api_samplers(),
         )
-
-    def api_input_image(self) -> FileResponse:
-        if self.config.input is None:
-            raise HTTPException(status_code=200, detail="No input image configured")
-
-        if self.config.input.is_file():
-            return FileResponse(self.config.input)
-        raise HTTPException(status_code=404, detail="Input image not found")
-
-    def api_geninfo(self, file: UploadFile) -> GenInfoResponse:
-        _, _, info = load_img(file.file.read(), return_info=True)
-        parts = info.get("parameters", "").split("Negative prompt: ")
-        prompt = parts[0].strip()
-        negative_prompt = ""
-        if len(parts) > 1:
-            negative_prompt = parts[1].split("\n")[0].strip()
-        return GenInfoResponse(prompt=prompt, negative_prompt=negative_prompt)
 
     def api_inpaint(self, req: InpaintRequest):
         image, alpha_channel, infos, ext = decode_base64_to_image(req.image)
@@ -295,13 +237,7 @@ class Api:
             infos=infos,
         )
 
-        asyncio.run(self.sio.emit("diffusion_finish"))
-
-        return Response(
-            content=res_img_bytes,
-            media_type=f"image/{ext}",
-            headers={"X-Seed": str(req.sd_seed)},
-        )
+        return Response(content=res_img_bytes, media_type=f"image/{ext}")
 
     def api_run_plugin_gen_image(self, req: RunPluginRequest):
         ext = "png"
@@ -347,9 +283,6 @@ class Api:
             media_type="image/png",
         )
 
-    def api_samplers(self) -> List[str]:
-        return [member.value for member in SDSampler.__members__.values()]
-
     def api_adjust_mask(self, req: AdjustMaskRequest):
         mask, _, _, _ = decode_base64_to_image(req.mask, gray=True)
         mask = adjust_mask(mask, req.kernel_size, req.operate)
@@ -358,25 +291,11 @@ class Api:
     def launch(self):
         self.app.include_router(self.router)
         uvicorn.run(
-            self.combined_asgi_app,
+            self.app,
             host=self.config.host,
             port=self.config.port,
             timeout_keep_alive=999999999,
         )
-
-    def _build_file_manager(self) -> Optional[FileManager]:
-        if self.config.input and self.config.input.is_dir():
-            logger.info(
-                f"Input is directory, initialize file manager {self.config.input}"
-            )
-
-            return FileManager(
-                app=self.app,
-                input_dir=self.config.input,
-                mask_dir=self.config.mask_dir,
-                output_dir=self.config.output_dir,
-            )
-        return None
 
     def _build_plugins(self) -> Dict[str, BasePlugin]:
         return build_plugins(
@@ -386,7 +305,6 @@ class Api:
             self.config.enable_remove_bg,
             self.config.remove_bg_device,
             self.config.remove_bg_model,
-            self.config.enable_anime_seg,
             self.config.enable_realesrgan,
             self.config.realesrgan_device,
             self.config.realesrgan_model,
@@ -403,9 +321,4 @@ class Api:
             device=torch.device(self.config.device),
             no_half=self.config.no_half,
             low_mem=self.config.low_mem,
-            disable_nsfw=self.config.disable_nsfw_checker,
-            sd_cpu_textencoder=self.config.cpu_textencoder,
-            local_files_only=self.config.local_files_only,
-            cpu_offload=self.config.cpu_offload,
-            callback=diffuser_callback,
         )

@@ -10,3 +10,6 @@ IOPaint.egg-info/
 venv/
 tmp/
 iopaint/web_app/
+
+folio_iopaint.egg-info/
+iopaint/tests/result/
