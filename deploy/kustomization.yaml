@@ -6,7 +6,6 @@ commonLabels:
   app.kubernetes.io/component: ai-edit
 resources:
   - k8s/models-pvc.yaml
-  - k8s/models-prefill-job.yaml
   - k8s/deployment.yaml
   - k8s/service.yaml
   - k8s/networkpolicy.yaml
