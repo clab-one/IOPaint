@@ -33,7 +33,9 @@ spec:
             - |
               set -eu
               echo "IMAGE:"; find /models -name '*.pt' -exec ls -lh {} +
-              cp -a /models/. /pvc/
+              # cp -a 는 마운트 루트에 시각을 쓰려다 실패한다
+              #   cp: preserving times for '/pvc/.': Operation not permitted
+              cp -r /models/. /pvc/
               echo "PVC:";   find /pvc -name '*.pt' -exec ls -lh {} +
               md5sum /pvc/torch/hub/checkpoints/big-lama.pt
           resources:

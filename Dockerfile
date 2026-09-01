@@ -4,8 +4,9 @@
 # torch 는 CPU 휠만 받는다 - clab-cluster 노드에 GPU 가 없고 CUDA 런타임은
 # 쓰지도 않으면서 이미지를 수 GB 불린다.
 #
-# LaMa 가중치(205MB)는 빌드 시점에 굽는다. 런타임에 받게 두면 파드가 뜰 때마다
-# GitHub release 에 의존하고 재시작 지연이 남의 네트워크에 묶인다.
+# 가중치는 이미지에 굽지 않는다. wave 3~5(RealESRGAN·GFPGAN·SAM·RemoveBG)를
+# 붙이면 GB 급이 되기 때문이다. PVC 에 두고 initContainer 가 채운다
+# (iopaint/prefetch.py). 이미지는 코드만 담는다.
 
 FROM python:3.12-slim
 
@@ -29,10 +30,7 @@ COPY requirements.txt setup.py README.md ./
 COPY iopaint ./iopaint
 RUN pip install -e .
 
-RUN python -c "from iopaint.model import models; models['lama'].download()" \
-    && find /models -name '*.pt' -exec ls -lh {} \;
-
-RUN useradd --create-home --uid 10001 folio && chown -R folio:folio /models
+RUN useradd --create-home --uid 10001 folio && mkdir -p /models && chown -R folio:folio /models
 USER folio
 
 EXPOSE 8080

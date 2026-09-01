@@ -32,28 +32,8 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
-        # PVC 는 root 소유로 만들어진다. fsGroup 이 있어야 uid 10001 이 쓴다.
-        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
-      initContainers:
-        # 가중치를 PVC 에 채운다. 이미 있으면 md5 만 확인하고 넘어간다.
-        # 이미지에 굽지 않는 이유는 Dockerfile 주석 참조.
-        - name: prefetch
-          image: ghcr.io/clab-one/folio-iopaint
-          command: ["python", "-m", "iopaint.prefetch", "lama"]
-          env:
-            - name: XDG_CACHE_HOME
-              value: /models
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities: { drop: ["ALL"] }
-          resources:
-            requests: { cpu: 100m, memory: 256Mi }
-            limits:   { cpu: "2",  memory: 2Gi }
-          volumeMounts:
-            - name: models
-              mountPath: /models
       containers:
         - name: iopaint
           image: ghcr.io/clab-one/folio-iopaint
@@ -123,8 +103,6 @@ spec:
           volumeMounts:
             - name: session
               mountPath: /session
-            - name: models
-              mountPath: /models
       volumes:
         # 계획 11 절: 편집 세션은 tmpfs 에만 산다. 디스크에 남기지 않고 TTL 이나
         # Done 으로 사라진다. sizeLimit 은 상한이지 예약이 아니라 비어 있으면 0 이다.
@@ -135,7 +113,3 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 12Gi
-        # 가중치. 세션(tmpfs)과 달리 재시작 사이에 남아야 한다.
-        - name: models
-          persistentVolumeClaim:
-            claimName: folio-ai-models
