@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: folio-ai
+commonLabels:
+  app.kubernetes.io/part-of: folio
+  app.kubernetes.io/component: ai-edit
+resources:
+  - k8s/deployment.yaml
+  - k8s/service.yaml
+  - k8s/networkpolicy.yaml
+
+# 이미지 버전은 CI가 소유한다. .github/workflows/build.yml 이 빌드 직후 이 digest를
+# 갱신 커밋하고, clab-cluster의 Argo CD가 그 커밋을 따라 롤아웃한다.
+# 손으로 고치지 마라 - 다음 빌드가 덮어쓴다. 아래 두 줄의 형식은 CI가 의존한다.
+images:
+- name: ghcr.io/clab-one/folio-iopaint
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

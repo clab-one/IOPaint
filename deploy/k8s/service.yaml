@@ -1,0 +1,17 @@
+# ClusterIP 만 둔다.
+#
+# 이 API 에는 인증이 없다. upstream IOPaint 의 계약을 그대로 물려받았고,
+# FOLIO 의 인증은 edit-session API(AI-003) 와 함께 온다. 그 전에 Ingress 로
+# 열면 인터넷에 무인증 GPU-급 연산을 공개하는 것이다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: folio-ai-edit
+spec:
+  type: ClusterIP
+  selector:
+    app: folio-ai-edit
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

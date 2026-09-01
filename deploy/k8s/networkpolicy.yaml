@@ -1,0 +1,18 @@
+# 무인증 API 라 네트워크로 막는다. 같은 네임스페이스에서만 부를 수 있다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: folio-ai-edit
+spec:
+  podSelector:
+    matchLabels:
+      app: folio-ai-edit
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: folio-ai
+      ports:
+        - protocol: TCP
+          port: 8080

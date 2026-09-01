@@ -1,0 +1,91 @@
+# folio-iopaint 이미지 빌드 → GHCR → digest 고정 커밋.
+#
+# clab-cluster 의 셀프호스티드 러너에서 돈다. Argo CD 는 아래 digest 커밋을
+# 따라 롤아웃하므로, 이 워크플로가 배포의 유일한 경로다.
+name: build
+
+on:
+  push:
+    branches: [folio-vendor]
+    paths:
+      - "iopaint/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "setup.py"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/clab-one/folio-iopaint
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: clab-amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: remote
+          endpoint: tcp://buildkitd.arc-build.svc.cluster.local:1234
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # provenance attestation 은 빌드 시각과 run id 를 담아 소스가 같아도
+          # index digest 를 매번 바꾼다. 켜 두면 아무것도 안 바뀐 빌드가 배포
+          # 커밋을 만들고 파드를 재시작시킨다.
+          provenance: false
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
+
+      - name: pin digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          KFILE=deploy/kustomization.yaml
+          # 형식이 계약이다. 어긋나면 조용히 지나가지 말고 여기서 죽는다.
+          grep -qx -- "- name: ${IMAGE}" "$KFILE"
+          test "$(grep -c '^  digest: sha256:' "$KFILE")" = "1"
+          sed -i "s|^  digest: sha256:.*|  digest: ${DIGEST}|" "$KFILE"
+          grep -qx -- "  digest: ${DIGEST}" "$KFILE"
+
+          if git diff --quiet -- "$KFILE"; then
+            echo "digest 변화 없음"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$KFILE"
+          git commit -m "deploy: folio-iopaint ${DIGEST}"
+
+          for i in 1 2 3 4 5; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+              git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep $((i * 3))
+          done
+          echo "digest 커밋 push 실패" >&2
+          exit 1

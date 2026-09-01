@@ -1,0 +1,90 @@
+# folio-ai-edit — FOLIO 의 지우기 백엔드.
+#
+# 한 Deployment 다. 계획은 api / session / iopaint 를 나눠 그렸지만 같은 계획이
+# "초기에는 하나로 합쳐도 된다" 고 적었고, 지금 셋의 부하 특성이 다르지 않다.
+# 분리는 실제로 달라졌을 때 한다.
+#
+# replicas 1: LaMa CPU 추론은 코어를 몰아 쓴다. 단일 노드에서 두 벌을 띄우면
+# 서로의 스레드를 뺏을 뿐 처리량이 늘지 않는다. 수평 확장은 노드가 늘 때 의미가 생긴다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: folio-ai-edit
+spec:
+  replicas: 1
+  strategy:
+    # 노드가 하나고 이미지가 2GB 급이라 롤링으로 두 벌을 동시에 띄우면
+    # 메모리와 페이지캐시를 두 배로 먹는다. 짧은 중단을 택한다.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: folio-ai-edit
+  template:
+    metadata:
+      labels:
+        app: folio-ai-edit
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: iopaint
+          image: ghcr.io/clab-one/folio-iopaint
+          args:
+            - --model=lama
+            - --device=cpu
+            - --host=0.0.0.0
+            - --port=8080
+            - --model-dir=/models
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # 세션 작업공간. 계획 11 절의 tmpfs 경로다.
+            - name: FOLIO_SESSION_DIR
+              value: /session
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            # 계획에 수치가 없어 여기서 정한다. LaMa 800² CPU 추론은 코어를
+            # 몰아 쓰지만 상시 점유는 아니다 - requests 를 작게 잡아 노드의
+            # 다른 워크로드 스케줄링을 막지 않고, limits 로 폭주만 자른다.
+            # 노드 24 vCPU / 62Gi 중 현재 요청 24% / 16%.
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+          startupProbe:
+            # 이미지에 가중치가 구워져 있어도 torch.jit 적재에 시간이 걸린다.
+            httpGet: { path: /api/v1/server-config, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /api/v1/server-config, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/v1/server-config, port: http }
+            periodSeconds: 30
+            failureThreshold: 3
+          volumeMounts:
+            - name: session
+              mountPath: /session
+      volumes:
+        # 계획 11 절: 편집 세션은 tmpfs 에만 산다. 디스크에 남기지 않고 TTL 이나
+        # Done 으로 사라진다. sizeLimit 은 상한이지 예약이 아니라 비어 있으면 0 이다.
+        #
+        # 지금 fork 의 API 는 무상태(/api/v1/inpaint)라 이 볼륨을 쓰지 않는다.
+        # 세션 API 는 AI-003 이다. 그때 코드만 오면 되도록 배포 형태를 먼저 맞춘다.
+        - name: session
+          emptyDir:
+            medium: Memory
+            sizeLimit: 12Gi
