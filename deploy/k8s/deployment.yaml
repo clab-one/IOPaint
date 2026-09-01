@@ -32,8 +32,49 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
+        # PVC 는 root 소유로 만들어진다. fsGroup 을 주면 kubelet 이 볼륨을
+        # 이 그룹으로 넘겨줘 uid 10001 이 쓸 수 있다.
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # 가중치를 PVC 에 채운다.
+        #
+        # **PVC 를 /models 가 아니라 /pvc 에 붙인다.** /models 에 붙이면
+        # 이미지에 구워진 레이어가 가려져서 복사할 원본이 사라진다. 여기서는
+        # 이미지의 /models 가 그대로 보이므로 --seed-from 이 그 자리를 찾고,
+        # 네트워크 없이 로컬 복사로 끝난다.
+        #
+        # bake 를 걷어내는 3단계 뒤에는 seed 가 없어 자연히 다운로드로
+        # 떨어지지만, 그때 PVC 는 이미 차 있어 md5 확인만 한다.
+        - name: prefetch
+          image: ghcr.io/clab-one/folio-iopaint
+          command:
+            - python
+            - -m
+            - iopaint.prefetch
+            - --seed-from
+            - /models
+            - lama
+          env:
+            # prefetch 가 쓸 캐시 루트를 PVC 쪽으로 돌린다. 이미지의
+            # XDG_CACHE_HOME=/models 를 여기서만 덮는다.
+            - name: XDG_CACHE_HOME
+              value: /pvc
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          volumeMounts:
+            - name: models
+              mountPath: /pvc
       containers:
         - name: iopaint
           image: ghcr.io/clab-one/folio-iopaint
@@ -103,6 +144,11 @@ spec:
           volumeMounts:
             - name: session
               mountPath: /session
+            # initContainer 가 채운 PVC 를 이미지의 캐시 자리에 겹친다.
+            # 이 순간 baked 레이어는 가려지지만, 같은 파일이 PVC 에 있으므로
+            # 보이는 결과는 같다. 3단계에서 bake 를 지우면 이것만 남는다.
+            - name: models
+              mountPath: /models
       volumes:
         # 계획 11 절: 편집 세션은 tmpfs 에만 산다. 디스크에 남기지 않고 TTL 이나
         # Done 으로 사라진다. sizeLimit 은 상한이지 예약이 아니라 비어 있으면 0 이다.
@@ -113,3 +159,10 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 12Gi
+        # 가중치는 반대다 - 세션은 사라져야 하고 가중치는 남아야 한다.
+        # 이미지에 구우면 wave 3~5(SAM 최대 2.4GB, RealESRGAN, GFPGAN,
+        # RestoreFormer)를 붙이는 순간 GB 급이 된다. 여기 두면 이미지는
+        # 코드만 담고, 모델을 늘려도 재배포가 무거워지지 않는다.
+        - name: models
+          persistentVolumeClaim:
+            claimName: folio-ai-models
