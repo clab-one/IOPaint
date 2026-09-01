@@ -62,8 +62,13 @@ class Backend(Protocol):
     """
 
     name: str
+    #: 이 백엔드가 지키는 자원의 동시 사용 상한. 로컬은 CPU 라 1, 원격은
+    #: 네트워크라 여러 개.
+    slots: threading.BoundedSemaphore
 
-    def healthy(self) -> bool: ...
+    def healthy(self) -> bool:
+        """**I/O 금지.** 요청 경로와 `/healthz` 에서 불린다."""
+        ...
 
     def erase(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray: ...
 
@@ -86,6 +91,16 @@ class Stats:
             self._samples.append(ms)
             if len(self._samples) > self.window:
                 self._samples.pop(0)
+
+    def enter(self) -> None:
+        """줄에 선다. **슬롯을 잡기 전에** 부른다 - `estimated_ms` 가
+        "앞에 몇 개 있는가" 를 뜻하려면 대기 중인 것도 세야 한다."""
+        with self._lock:
+            self.inflight += 1
+
+    def leave(self) -> None:
+        with self._lock:
+            self.inflight -= 1
 
     @property
     def p50(self) -> float:
@@ -146,10 +161,21 @@ class LocalBackend:
 
     name = "local"
 
-    def __init__(self, model_manager, request_factory, seed_ms: float = 2900.0):
+    def __init__(
+        self, model_manager, request_factory, seed_ms: float = 2900.0, slots: int = 1
+    ):
         self._mm = model_manager
         self._request = request_factory
         self.stats = Stats(seed_ms=seed_ms)
+        # **여기가 원래 입장 제어가 지키려던 자원이다.** OMP_NUM_THREADS 가
+        # 컨테이너 할당량(8코어)을 이미 다 쓰도록 맞춰져 있어 두 벌을 겹치면
+        # 서로 스로틀만 걸린다 - 512² 100건 동시 요청에 컨테이너가 죽었던
+        # 사고의 원인이다(admission.py).
+        #
+        # 제한을 그것이 지키는 자원 옆에 둔다. 전역 세마포어로 모든 추론을
+        # 직렬화하면 로컬 CPU 와 무관한 원격 호출까지 줄을 서서, 노드를
+        # 하나 더 붙여도 처리량이 늘지 않는다 - 실측 1.12 req/s 고정.
+        self.slots = threading.BoundedSemaphore(slots)
 
     def healthy(self) -> bool:
         return True
@@ -177,37 +203,59 @@ class CoreMLBackend:
         key: str,
         timeout: float = 20.0,
         seed_ms: float = 300.0,
+        probe_timeout: float = 3.0,
+        slots: int = 4,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.stats = Stats(seed_ms=seed_ms)
+        # 원격은 네트워크만 쓴다 - 로컬 CPU 를 먹지 않으므로 겹쳐도 된다.
+        # 워커 실측 conc=4 에서 3.06 req/s 로 포화한다.
+        self.slots = threading.BoundedSemaphore(slots)
         self._ctx = ssl.create_default_context(cafile=ca)
         self._ctx.load_cert_chain(cert, key)
         # 워커 인증서는 IP SAN 으로 발급됐다. 호스트명 검증은 그대로 둔다 -
         # CA 가 우리 것이고 SAN 에 그 IP 가 들어 있다.
         self._healthy = False
-        self._checked = 0.0
+        self._probe_timeout = probe_timeout
 
     # --- 건강 ---------------------------------------------------------------
 
     def healthy(self) -> bool:
-        """5초 캐시. 매 요청마다 왕복하면 그게 지연이 된다."""
-        now = time.time()
-        if now - self._checked < 5.0:
-            return self._healthy
-        self._checked = now
+        """**I/O 를 하지 않는다.** 배경 프로버가 갱신한 값을 읽기만 한다.
+
+        여기서 왕복하면 안 되는 이유는 지연이 아니라 정지다. `/healthz` 는
+        `async` 엔드포인트라 이벤트 루프에서 직접 돈다 - 그 안에서 블로킹
+        `urlopen` 을 하면 원격이 응답하지 않는 동안 **이벤트 루프 전체가**
+        멈춘다. 그러면 liveness 프로브(kubelet 기본 1초)가 시간 초과하고,
+        3회면 멀쩡한 컨테이너가 재시작된다. 원격 노드 하나가 사라졌을 뿐인데
+        로컬 폴백은커녕 파드가 죽는다 - 계획 16 절이 약속한 것의 정반대다.
+
+        블랙홀(RST 가 아니라 무응답)일 때가 최악이다. 연결 거부는 즉시
+        실패하지만 응답 없는 호스트는 타임아웃까지 붙잡는다.
+        """
+        return self._healthy
+
+    def probe_once(self) -> bool:
+        """실제로 왕복한다. 배경 스레드에서만 부른다."""
         try:
             import urllib.request
 
             with urllib.request.urlopen(
-                f"{self.base_url}/internal/v1/health", timeout=3, context=self._ctx
+                f"{self.base_url}/internal/v1/health",
+                timeout=self._probe_timeout,
+                context=self._ctx,
             ) as r:
-                self._healthy = r.status == 200
+                ok = r.status == 200
         except Exception as e:
             if self._healthy:
                 logger.warning(f"coreml 노드 이탈: {e}")
-            self._healthy = False
-        return self._healthy
+            ok = False
+        else:
+            if ok and not self._healthy:
+                logger.info("coreml 노드 복귀")
+        self._healthy = ok
+        return ok
 
     # --- 추론 ---------------------------------------------------------------
 
@@ -283,6 +331,14 @@ class Scheduler:
     def __init__(self, local: Backend, remote: Backend | None = None):
         self.local = local
         self.remote = remote
+        # 원격을 가진 쪽이 그 생사 확인도 가진다. 만들되 띄우지는 않는다 -
+        # 테스트가 스레드 없이 스케줄러를 쓸 수 있어야 한다.
+        self.prober = Prober(remote) if isinstance(remote, CoreMLBackend) else None
+
+    def start(self) -> None:
+        """배경 프로버를 띄운다. 원격이 없으면 아무 일도 하지 않는다."""
+        if self.prober is not None:
+            self.prober.start()
 
     def choose(self) -> Backend:
         if self.remote is None or not self.remote.healthy():
@@ -310,11 +366,15 @@ class Scheduler:
 
     @staticmethod
     def _run(backend: Backend, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        backend.stats.inflight += 1
+        # 줄부터 선다. 슬롯을 기다리는 동안에도 inflight 에 잡혀야 뒤따르는
+        # 요청의 `estimated_ms` 가 이 대기를 본다 - 그래야 원격이 밀릴 때
+        # 자연스럽게 로컬로 넘어간다.
+        backend.stats.enter()
         try:
-            return backend.erase(image, mask)
+            with backend.slots:
+                return backend.erase(image, mask)
         finally:
-            backend.stats.inflight -= 1
+            backend.stats.leave()
 
     def stats(self) -> dict:
         out = {
@@ -327,9 +387,57 @@ class Scheduler:
             out["coreml"] = {
                 "p50_ms": round(self.remote.stats.p50),
                 "inflight": self.remote.stats.inflight,
+                # 캐시된 값이다. 이 호출은 네트워크를 건드리지 않는다.
                 "healthy": self.remote.healthy(),
+                # 프로버가 죽으면 위 값이 마지막 판정에 얼어붙는다. 그러면
+                # 원격이 죽어도 계속 보내고 매번 폴백해 두 배로 느려진다.
+                "prober": self.prober.alive if self.prober is not None else False,
             }
         return out
+
+
+class Prober:
+    """원격 백엔드의 생사를 배경에서 갱신하는 데몬 스레드.
+
+    Reaper 와 같은 이유로 스레드다: 요청이 올 때만 확인하면 그 확인 비용이
+    요청 지연이 되고, 더 나쁘게는 `/healthz` 처럼 **이벤트 루프에서 도는**
+    호출자가 원격 타임아웃만큼 통째로 멈춘다.
+
+    `alive` 를 밖에서 볼 수 있게 둔다 - 데몬 스레드는 조용히 죽고, 죽으면
+    `healthy` 가 마지막 값에 영원히 얼어붙는다. 그 상태로 원격이 죽으면
+    모든 요청이 원격으로 갔다가 폴백하느라 두 배로 느려진다.
+    """
+
+    def __init__(self, backend: CoreMLBackend, interval: float = 5.0):
+        self.backend = backend
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        # 첫 판정은 동기로 한 번 낸다. 안 그러면 기동 직후 interval 동안
+        # 멀쩡한 원격을 죽은 것으로 보고 전부 로컬로 보낸다.
+        self.backend.probe_once()
+        self._thread = threading.Thread(
+            target=self._run, name="coreml-prober", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            try:
+                self.backend.probe_once()
+            except Exception as e:  # 스레드가 죽으면 판정이 얼어붙는다
+                logger.warning(f"coreml 프로브 실패: {e}")
 
 
 def build_remote() -> CoreMLBackend | None:

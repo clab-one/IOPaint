@@ -172,6 +172,10 @@ class Api:
             ),
             build_remote(),
         )
+        # 생사 확인은 배경에서만 한다. `/healthz` 는 async 라 이벤트 루프에서
+        # 도는데, 거기서 원격에 왕복하면 응답 없는 노드 하나가 프로세스 전체를
+        # 타임아웃만큼 세운다 - liveness 가 굶어 파드가 재시작된다.
+        self.scheduler.start()
 
         # fmt: off
         self.add_api_route("/api/v1/server-config", self.api_server_config, methods=["GET"],

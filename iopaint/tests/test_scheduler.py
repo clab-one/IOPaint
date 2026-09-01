@@ -10,10 +10,15 @@
   - ROI 왕복이 마스크 밖을 한 픽셀도 바꾸지 않는다.
 """
 
+import threading
+import time
+import urllib.request
+
 import numpy as np
 import pytest
 
 from iopaint.scheduler import (
+    CoreMLBackend,
     LocalBackend,
     Scheduler,
     Stats,
@@ -23,9 +28,10 @@ from iopaint.scheduler import (
 
 
 class _Fake:
-    def __init__(self, name, seed_ms, healthy=True, fail=False):
+    def __init__(self, name, seed_ms, healthy=True, fail=False, slots=1):
         self.name = name
         self.stats = Stats(seed_ms=seed_ms)
+        self.slots = threading.BoundedSemaphore(slots)
         self._healthy = healthy
         self._fail = fail
         self.calls = 0
@@ -214,8 +220,83 @@ def test_local_backend_returns_rgb_not_bgr():
     assert tuple(out[0, 0]) == (30, 20, 10), f"RGB 로 나오지 않았다: {out[0, 0]}"
 
 
+def test_healthy_never_touches_the_network():
+    """생사 조회는 I/O 를 하지 않는다.
+
+    `/healthz` 는 async 엔드포인트라 이벤트 루프에서 직접 돈다. 거기서
+    블로킹 왕복을 하면 응답 없는 원격 하나가 프로세스 전체를 타임아웃만큼
+    세우고, kubelet 기본 1초짜리 liveness 가 굶어 파드가 재시작된다 -
+    "원격이 죽어도 로컬로 폴백" 계약의 정반대 결과다.
+    """
+    import iopaint.scheduler as sch
+
+    b = CoreMLBackend.__new__(CoreMLBackend)  # __init__ 은 TLS 를 요구한다
+    b.stats = Stats(seed_ms=300)
+    b._healthy = True
+
+    called = []
+    real = urllib.request.urlopen
+    urllib.request.urlopen = lambda *a, **k: called.append(a) or real(*a, **k)
+    try:
+        for _ in range(50):
+            assert b.healthy() is True
+    finally:
+        urllib.request.urlopen = real
+
+    assert called == [], f"healthy() 가 네트워크를 만졌다: {called}"
+    assert hasattr(sch, "Prober"), "배경 프로버가 없으면 판정이 갱신되지 않는다"
+
+
+def test_remote_requests_overlap_local_stays_serial():
+    """두 노드가 겹쳐 돈다. 로컬만 직렬이다.
+
+    전역 세마포어로 모든 추론을 직렬화하면 노드를 하나 더 붙여도 처리량이
+    늘지 않는다 - 실측 conc=1..8 전부 1.12 req/s 로 평평했고 로컬은 24건 중
+    0건을 처리했다. 제한은 그것이 지키는 자원(로컬 CPU) 옆에 있어야 한다.
+    """
+    peak = {"local": 0, "remote": 0}
+    cur = {"local": 0, "remote": 0}
+    guard = threading.Lock()
+
+    def make(key, slots, delay):
+        f = _Fake(key, 100, slots=slots)
+
+        def erase(image, mask, _k=key):
+            with guard:
+                cur[_k] += 1
+                peak[_k] = max(peak[_k], cur[_k])
+            time.sleep(delay)
+            with guard:
+                cur[_k] -= 1
+            return np.full_like(image, 7)
+
+        f.erase = erase
+        return f
+
+    local, remote = make("local", 1, 0.05), make("remote", 4, 0.05)
+    s = Scheduler(local, remote)
+
+    img = np.zeros((8, 8, 3), np.uint8)
+    ts = [
+        threading.Thread(target=lambda: s.erase(img, np.zeros((8, 8), np.uint8)))
+        for _ in range(8)
+    ]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+
+    assert peak["remote"] > 1, f"원격이 겹치지 않았다 (peak={peak['remote']})"
+    assert peak["local"] <= 1, f"로컬이 겹쳤다 - CPU 스로틀 사고 재발 (peak={peak['local']})"
+
+
 def test_stats_reports_both_nodes():
     s = _sched()
     body = s.stats()
     assert body["local"]["p50_ms"] == 2900
-    assert body["coreml"] == {"p50_ms": 300, "inflight": 0, "healthy": True}
+    assert body["coreml"] == {
+        "p50_ms": 300,
+        "inflight": 0,
+        "healthy": True,
+        # _Fake 는 CoreMLBackend 가 아니라 프로버가 붙지 않는다. 실제
+        # 배포에서 이 값이 False 면 생사 판정이 얼어붙었다는 뜻이다.
+        "prober": False,
+    }
