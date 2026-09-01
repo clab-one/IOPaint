@@ -17,11 +17,14 @@ on:
       - "requirements.txt"
       - "setup.py"
       - ".github/workflows/build.yml"
-    paths-ignore:
       # 테스트는 이미지에 들어가지만 런타임 동작을 바꾸지 않는다. 이게 빌드를
-      # 유발하면 digest 가 바뀌고, Argo 가 selfHeal 로 즉시 따라가 승인 없이
+      # 유발하면 digest 가 바뀌고 Argo 가 selfHeal 로 즉시 따라가 승인 없이
       # 파드를 재생성한다 - 실제로 한 번 그렇게 됐다.
-      - "iopaint/tests/**"
+      #
+      # paths 와 paths-ignore 는 같은 이벤트에 함께 못 쓴다(워크플로가 로드조차
+      # 되지 않는다). 부정 패턴으로 뺀다 - 뒤 패턴이 앞을 덮으므로 순서가 중요하다.
+      - "!iopaint/tests/**"
+
   workflow_dispatch:
 
 env:
