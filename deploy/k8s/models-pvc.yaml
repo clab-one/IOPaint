@@ -1,0 +1,21 @@
+# 모델 가중치 캐시.
+#
+# 이미지에 굽지 않는 이유: 지금은 LaMa 205MB 하나지만 wave 3~5 가 붙으면
+# SAM(최대 2.4GB) · RealESRGAN · GFPGAN + 얼굴 검출/파싱 보조 가중치 4종 ·
+# RemoveBG 가 더해져 이미지가 GB 급이 된다. 이미지는 코드만 담고 가중치는
+# 여기 남긴다 - 파드 재시작이 다운로드를 반복하지 않는다.
+#
+# clab-cluster 의 StorageClass 는 local-path 하나다. 단일 노드라 노드 로컬
+# 디스크로 충분하고, ReadWriteOnce 로 족하다(replicas 1).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: folio-ai-models
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      # LaMa 205MB + wave 3~5 를 다 받아도 여유가 있는 크기.
+      # local-path 는 씬 프로비저닝이라 실제 사용분만 디스크를 먹는다.
+      storage: 20Gi
