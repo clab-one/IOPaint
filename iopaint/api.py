@@ -133,7 +133,15 @@ class Api:
         self.app = app
         self.config = config
         self.router = APIRouter()
-        self.queue_lock = threading.Lock()
+        # 플러그인 객체의 수명을 지킨다. `switch_plugin_model` 은 플러그인이
+        # 들고 있는 모델을 통째로 갈아치우는데, 그 사이 `gen_image`/`gen_mask`
+        # 가 같은 객체를 쓰고 있으면 반쯤 바뀐 상태를 읽는다. inpaint 쪽은
+        # ModelManager 안에서 막았지만 플러그인은 upstream 클래스라 여기서
+        # 막는다 - 그래야 fork 가 upstream 을 계속 당겨올 수 있다.
+        #
+        # (upstream 의 queue_lock 은 diffusion 경로와 함께 사라져 쓰이지
+        #  않고 있었다. 이름을 정확한 것으로 바꿔 되살린다.)
+        self._plugin_lock = threading.Lock()
         # 무한 동시성이 컨테이너를 죽인다 - iopaint/admission.py 참조.
         self.admission = Admission(
             inflight=config.inflight, max_queue=config.max_queue
@@ -215,7 +223,8 @@ class Api:
 
     def api_switch_plugin_model(self, req: SwitchPluginModelRequest):
         if req.plugin_name in self.plugins:
-            self.plugins[req.plugin_name].switch_model(req.model_name)
+            with self._plugin_lock:
+                self.plugins[req.plugin_name].switch_model(req.model_name)
             if req.plugin_name == RemoveBG.name:
                 self.config.remove_bg_model = req.model_name
             if req.plugin_name == RealESRGANUpscaler.name:
@@ -309,7 +318,8 @@ class Api:
     def _api_run_plugin_gen_image(self, req: RunPluginRequest):
         ext = "png"
         rgb_np_img, alpha_channel, infos, _ = decode_base64_to_image(req.image)
-        bgr_or_rgba_np_img = self.plugins[req.name].gen_image(rgb_np_img, req)
+        with self._plugin_lock:
+            bgr_or_rgba_np_img = self.plugins[req.name].gen_image(rgb_np_img, req)
         torch_gc()
 
         if bgr_or_rgba_np_img.shape[2] == 4:
@@ -335,7 +345,8 @@ class Api:
 
     def _api_run_plugin_gen_mask(self, req: RunPluginRequest):
         rgb_np_img, _, _, _ = decode_base64_to_image(req.image)
-        bgr_or_gray_mask = self.plugins[req.name].gen_mask(rgb_np_img, req)
+        with self._plugin_lock:
+            bgr_or_gray_mask = self.plugins[req.name].gen_mask(rgb_np_img, req)
         torch_gc()
         res_mask = gen_frontend_mask(bgr_or_gray_mask)
         return Response(

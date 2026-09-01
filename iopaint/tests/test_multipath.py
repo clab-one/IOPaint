@@ -46,6 +46,7 @@ def _api_with(plugins):
     api = Api.__new__(Api)
     api.plugins = plugins
     api.admission = _Recorder()
+    api._plugin_lock = threading.Lock()
     return api
 
 
@@ -127,3 +128,61 @@ def test_inference_arriving_mid_switch_does_not_see_a_missing_model(monkeypatch)
 
     assert img[0, 0, 0] == 9, "교체 완료 전의 모델로 답했다"
     assert m.name == "b"
+
+
+# --- 플러그인 교체 경쟁 -----------------------------------------------------
+
+
+class _SwappablePlugin:
+    """`switch_model` 이 내부 모델을 갈아치우는 upstream 플러그인의 모양."""
+
+    support_gen_image = True
+    support_gen_mask = True
+
+    def __init__(self):
+        self.model = "old"
+        self.observed = []
+
+    def switch_model(self, name):
+        self.model = None  # 교체 구간 - 여기서 gen_image 가 들어오면 안 된다
+        time.sleep(0.3)
+        self.model = name
+
+    def gen_image(self, img, req):
+        self.observed.append(self.model)
+        import numpy as np
+
+        return np.zeros((2, 2, 3), dtype=np.uint8)
+
+
+def test_plugin_swap_does_not_expose_a_half_swapped_plugin(monkeypatch):
+    """플러그인 모델 교체 중에 도착한 요청이 반쯤 바뀐 상태를 보지 않는다.
+
+    inpaint 는 ModelManager 안에서 막았지만 플러그인은 upstream 클래스라
+    Api 가 막아야 한다. wave 3~5 에서 RealESRGAN·GFPGAN·SAM 이 붙으면
+    실제로 부딪히는 경로다.
+    """
+    from iopaint.api import Api
+
+    plugin = _SwappablePlugin()
+    api = _api_with({"P": plugin})
+    monkeypatch.setattr("iopaint.api.torch_gc", lambda: None)
+    monkeypatch.setattr(
+        "iopaint.api.decode_base64_to_image", lambda *a, **k: (None, None, {}, "png")
+    )
+    monkeypatch.setattr("iopaint.api.pil_to_bytes", lambda *a, **k: b"")
+    monkeypatch.setattr("iopaint.api.concat_alpha_channel", lambda img, a: img)
+    monkeypatch.setattr("iopaint.api.cv2.cvtColor", lambda img, code: img)
+    api.config = type("C", (), {"quality": 95, "remove_bg_model": None})()
+
+    t = threading.Thread(
+        target=lambda: Api.api_switch_plugin_model(
+            api, type("R", (), {"plugin_name": "P", "model_name": "new"})()
+        )
+    )
+    t.start()
+    time.sleep(0.05)  # 모델이 None 인 구간
+    Api.api_run_plugin_gen_image(api, type("R", (), {"name": "P", "image": ""})())
+    t.join()
+
+    assert plugin.observed == ["new"], f"반쯤 바뀐 플러그인을 봤다: {plugin.observed}"
