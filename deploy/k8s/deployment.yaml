@@ -94,6 +94,15 @@ spec:
             # 세션 작업공간. 계획 11 절의 tmpfs 경로다.
             - name: FOLIO_SESSION_DIR
               value: /session
+            # tmpfs 예산. 세션 하나가 원본 + working 두 벌을 든다.
+            # 32 × 64MiB × 2 = 4GiB 상한, volume sizeLimit 12Gi 안이다.
+            # 넘으면 create 가 503 으로 거절한다 - 노드 RAM 을 지키는 쪽이 낫다.
+            - name: FOLIO_MAX_SESSIONS
+              value: "32"
+            # 계획 11 절: TTL 20분. 클라이언트가 Done 을 부르지 않고 사라지는
+            # 것은 정상 경로다. reaper 가 60초마다 훑는다.
+            - name: FOLIO_SESSION_TTL
+              value: "1200"
             # cgroup 할당량과 스레드 수를 일치시킨다.
             #
             # 컨테이너는 cpu.max=800000/100000 즉 8코어인데 torch 는 호스트의
