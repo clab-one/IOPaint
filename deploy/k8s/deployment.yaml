@@ -50,6 +50,19 @@ spec:
             # 세션 작업공간. 계획 11 절의 tmpfs 경로다.
             - name: FOLIO_SESSION_DIR
               value: /session
+            # cgroup 할당량과 스레드 수를 일치시킨다.
+            #
+            # 컨테이너는 cpu.max=800000/100000 즉 8코어인데 torch 는 호스트의
+            # 24코어를 보고 16스레드를 띄운다. 그러면 주기 초반에 할당량을 태우고
+            # 남은 시간 얼어붙는다 - 800² 추론 한 번에 스로틀 111회, throttled
+            # 85.8초, CPU 시간 89.6초. 8스레드로 맞추면 스로틀 10회, throttled
+            # 66ms, CPU 시간 18.2초로 떨어지고 벽시계가 11.3초 → 2.3초가 된다.
+            #
+            # limits.cpu 를 바꾸면 이 값도 같이 바꿔야 한다. 둘은 같은 수다.
+            - name: OMP_NUM_THREADS
+              value: "8"
+            - name: MKL_NUM_THREADS
+              value: "8"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
