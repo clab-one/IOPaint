@@ -87,3 +87,6 @@ def test_rejects_invalid_config():
         Admission(inflight=0)
     with pytest.raises(ValueError):
         Admission(inflight=1, max_queue=-1)
+
+
+# 결합 해제 검증용 주석 - 이 변경이 digest 를 바꾸면 안 된다.
