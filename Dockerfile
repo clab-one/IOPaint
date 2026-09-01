@@ -4,15 +4,14 @@
 # torch 는 CPU 휠만 받는다 - clab-cluster 노드에 GPU 가 없고 CUDA 런타임은
 # 쓰지도 않으면서 이미지를 수 GB 불린다.
 #
-# 가중치는 아직 이미지에 굽는다(205MB). 최종 목표는 PVC 지만, PVC 를
-# /models 에 마운트하는 순간 이 레이어가 가려지므로 전환은 세 걸음이다:
+# 가중치는 이미지에 굽지 않는다. wave 3~5(SAM 최대 2.4GB, RealESRGAN,
+# GFPGAN, RestoreFormer)를 붙이면 이미지가 GB 급이 되고, 모델을 하나 늘릴
+# 때마다 배포가 무거워진다. PVC 에 두고 initContainer 가 채운다
+# (iopaint/prefetch.py). 이미지는 코드만 담는다.
 #
-#   1) 이미지에 prefetch 모듈을 넣는다. bake 유지.          <- 지금
-#   2) Deployment 가 PVC 를 붙이고 initContainer 가 이 레이어에서 복사한다.
-#      (PVC 를 /pvc 에, seed 를 /models 로 - 그래서 가려지지 않는다)
-#   3) bake 를 걷어낸다. PVC 는 이미 차 있어 md5 확인만 한다.
-#
-# 각 걸음이 단독으로 안전해야 한다. 겹치는 구간 없이 갈아타려다 네 번 깨뜨렸다.
+# 그래서 이 이미지 단독으로는 뜨지 못한다 - Deployment 가 PVC 를 /models 에
+# 붙이고 initContainer 로 채워야 한다. 그 둘이 어긋나면 파드가 매 기동마다
+# 인터넷에서 받는다. iopaint/tests/test_deploy_consistency.py 가 검사한다.
 
 FROM python:3.12-slim
 
@@ -38,11 +37,6 @@ RUN pip install -e .
 
 RUN useradd --create-home --uid 10001 folio && mkdir -p /models && chown -R folio:folio /models
 USER folio
-
-# 가중치를 구워 넣는다. 빌드는 원자적이라 잘린 파일이 남지 않는다.
-# prefetch 를 그대로 쓴다 - 런타임과 같은 코드가 같은 자리에 놓아야
-# 2단계의 --seed-from 이 그 자리를 찾는다.
-RUN python -m iopaint.prefetch lama
 
 EXPOSE 8080
 
