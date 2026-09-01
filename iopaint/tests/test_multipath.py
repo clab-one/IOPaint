@@ -186,3 +186,115 @@ def test_plugin_swap_does_not_expose_a_half_swapped_plugin(monkeypatch):
     t.join()
 
     assert plugin.observed == ["new"], f"반쯤 바뀐 플러그인을 봤다: {plugin.observed}"
+
+
+# --- 로컬 CPU 직렬화 --------------------------------------------------------
+#
+# 입장 제어의 --inflight 는 이제 5 다(로컬 1 + 원격 4). 그 값이 1 이던 시절에는
+# 그것 하나가 모든 CPU 작업을 직렬화했지만, 지금은 아니다. 로컬 CPU 를 지키는
+# 것은 각 경로가 잡는 락이다:
+#
+#   session erase / api_inpaint   ModelManager._model_lock
+#   plugin gen_image / gen_mask   Api._plugin_lock
+#
+# **두 락 모두 CPU 때문에 생긴 것이 아니다.** _model_lock 은 `del self.model`
+# 경쟁 때문에, _plugin_lock 은 switch_model 경쟁 때문에 생겼다. 즉 지금의 CPU
+# 보호는 우연이고, 누가 두 락을 본래 목적대로 좁히면 - 예컨대 _model_lock 을
+# del 구간만 감싸게 - 512² 100건에 컨테이너가 죽던 사고가 조용히 돌아온다.
+#
+# 그래서 우연에 기대지 않고 여기서 불변식으로 못박는다: inflight 가 몇이든
+# 로컬 CPU 작업은 겹치지 않는다.
+
+
+class _OverlapWatch:
+    """동시에 몇 개가 몸통에 들어와 있었는지 최대값을 센다."""
+
+    def __init__(self, delay=0.02):
+        self.delay = delay
+        self.peak = 0
+        self._cur = 0
+        self._guard = threading.Lock()
+
+    def work(self):
+        with self._guard:
+            self._cur += 1
+            self.peak = max(self.peak, self._cur)
+        time.sleep(self.delay)
+        with self._guard:
+            self._cur -= 1
+
+
+def _hammer(fn, n=6):
+    ts = [threading.Thread(target=fn) for _ in range(n)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+
+
+def test_model_calls_never_overlap_whatever_inflight_says():
+    """`ModelManager.__call__` 은 겹치지 않는다.
+
+    세션 경로와 무상태 /api/v1/inpaint 가 **둘 다** 여기로 모인다. 여기가
+    겹치면 OMP_NUM_THREADS=8 짜리 추론이 여러 벌 돌아 서로 스로틀만 건다.
+    """
+    import numpy as np
+
+    w = _OverlapWatch()
+    m = _manager_with(1)
+
+    class _Watched:
+        def __call__(self, image, mask, config):
+            w.work()
+            return np.zeros((2, 2, 3), dtype=np.uint8)
+
+    m.model = _Watched()
+    _hammer(lambda: m(None, None, None))
+
+    assert w.peak == 1, (
+        f"로컬 추론이 {w.peak} 벌 겹쳤다. --inflight 가 1 이 아니게 된 뒤로는 "
+        "_model_lock 만이 CPU 를 지킨다 - 좁히면 과부하 사고가 재발한다."
+    )
+
+
+def test_plugin_runs_never_overlap_whatever_inflight_says():
+    """플러그인 실행도 겹치지 않는다.
+
+    wave 2 의 SAM 이 바로 이 경로다. 지금 배포는 plugins:[] 라 비어 있어
+    아무 일도 없지만, 모델을 붙이는 순간 CPU 를 쓰는 두 번째 경로가 된다.
+    """
+    import base64
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    w = _OverlapWatch()
+
+    class _Heavy:
+        support_gen_image = True
+        support_gen_mask = True
+
+        def gen_image(self, img, req):
+            w.work()
+            return np.zeros((2, 2, 3), dtype=np.uint8)
+
+        gen_mask = gen_image
+
+    api = _api_with({"heavy": _Heavy()})
+    # 입장 제어는 원래대로 5 를 허용한다 - 막는 것이 락뿐임을 보이려는
+    # 시험이므로 여기서 직렬화되면 아무것도 검증하지 못한다.
+    api.admission = Admission(inflight=5, max_queue=8)
+    api.config = type("C", (), {"quality": 95})()
+
+    buf = io.BytesIO()
+    Image.fromarray(np.zeros((4, 4, 3), np.uint8)).save(buf, "PNG")
+    b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    req = type("R", (), {"name": "heavy", "image": b64})()
+
+    # **진짜 핸들러를 부른다.** 테스트가 락을 직접 잡으면 핸들러에서 락이
+    # 사라져도 통과한다 - 아무것도 지키지 못하는 검사가 된다.
+    _hammer(lambda: api.api_run_plugin_gen_image(req))
+
+    assert w.peak == 1, (
+        f"플러그인이 {w.peak} 벌 겹쳤다. _plugin_lock 이 CPU 게이트를 겸한다 - "
+        "wave 2 에서 SAM 을 붙이면 이것이 유일한 보호다."
+    )
