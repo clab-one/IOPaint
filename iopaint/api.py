@@ -280,18 +280,34 @@ class Api:
 
         return Response(content=res_img_bytes, media_type=f"image/{ext}")
 
+    def _require_plugin(self, name: str, *, gen_image: bool):
+        """자리를 잡기 전에 거절할 수 있는 것은 먼저 거절한다.
+
+        입장 제어를 검증보다 먼저 잡으면 없는 플러그인을 부르는 요청도 자리를
+        차지한다. 실측: inpaint 6 + 없는 플러그인 6 을 동시에 넣었더니 무효
+        요청 4건이 슬롯을 먹고 진짜 지우기 1건이 503 을 맞았다. 사전형 조회는
+        비용이 없으니 문 앞에서 끝낸다.
+        """
+        if name not in self.plugins:
+            raise HTTPException(status_code=422, detail="Plugin not found")
+        supported = (
+            self.plugins[name].support_gen_image
+            if gen_image
+            else self.plugins[name].support_gen_mask
+        )
+        if not supported:
+            kind = "image" if gen_image else "mask"
+            raise HTTPException(
+                status_code=422, detail=f"Plugin does not support output {kind}"
+            )
+
     def api_run_plugin_gen_image(self, req: RunPluginRequest):
+        self._require_plugin(req.name, gen_image=True)
         with self.admission.admit():
             return self._api_run_plugin_gen_image(req)
 
     def _api_run_plugin_gen_image(self, req: RunPluginRequest):
         ext = "png"
-        if req.name not in self.plugins:
-            raise HTTPException(status_code=422, detail="Plugin not found")
-        if not self.plugins[req.name].support_gen_image:
-            raise HTTPException(
-                status_code=422, detail="Plugin does not support output image"
-            )
         rgb_np_img, alpha_channel, infos, _ = decode_base64_to_image(req.image)
         bgr_or_rgba_np_img = self.plugins[req.name].gen_image(rgb_np_img, req)
         torch_gc()
@@ -313,16 +329,11 @@ class Api:
         )
 
     def api_run_plugin_gen_mask(self, req: RunPluginRequest):
+        self._require_plugin(req.name, gen_image=False)
         with self.admission.admit():
             return self._api_run_plugin_gen_mask(req)
 
     def _api_run_plugin_gen_mask(self, req: RunPluginRequest):
-        if req.name not in self.plugins:
-            raise HTTPException(status_code=422, detail="Plugin not found")
-        if not self.plugins[req.name].support_gen_mask:
-            raise HTTPException(
-                status_code=422, detail="Plugin does not support output image"
-            )
         rgb_np_img, _, _, _ = decode_base64_to_image(req.image)
         bgr_or_gray_mask = self.plugins[req.name].gen_mask(rgb_np_img, req)
         torch_gc()

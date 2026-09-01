@@ -1,3 +1,4 @@
+import threading
 from typing import List, Dict
 
 import torch
@@ -24,6 +25,12 @@ class ModelManager:
         self.device = device
         self.kwargs = kwargs
         self.available_models: Dict[str, ModelInfo] = {}
+        # 모델 객체의 수명을 지킨다. `switch` 는 `del self.model` 로 시작하는데
+        # `__call__` 은 `self.model` 을 읽는다. 둘이 겹치면 진행 중인 추론이
+        # 사라진 객체를 잡는다. 입장 제어(inflight=1)가 추론끼리는 막아주지만
+        # 교체 경로는 그 밖에 있으므로 여기서 막아야 한다 - 새 라우트가
+        # 생겨도 우회할 수 없는 자리다.
+        self._model_lock = threading.Lock()
         self.scan_models()
         self.model = self.init_model(name, device, **kwargs)
 
@@ -54,7 +61,8 @@ class ModelManager:
         Returns:
             BGR image
         """
-        return self.model(image, mask, config).astype(np.uint8)
+        with self._model_lock:
+            return self.model(image, mask, config).astype(np.uint8)
 
     def scan_models(self) -> List[ModelInfo]:
         available_models = scan_models()
@@ -65,18 +73,21 @@ class ModelManager:
         if new_name == self.name:
             return
 
-        old_name = self.name
-        self.name = new_name
-        try:
-            del self.model
-            torch_gc()
-            self.model = self.init_model(
-                new_name, switch_mps_device(new_name, self.device), **self.kwargs
-            )
-        except Exception as e:
-            self.name = old_name
-            logger.info(f"Switch model from {old_name} to {new_name} failed, rollback")
-            self.model = self.init_model(
-                old_name, switch_mps_device(old_name, self.device), **self.kwargs
-            )
-            raise e
+        with self._model_lock:
+            old_name = self.name
+            self.name = new_name
+            try:
+                del self.model
+                torch_gc()
+                self.model = self.init_model(
+                    new_name, switch_mps_device(new_name, self.device), **self.kwargs
+                )
+            except Exception as e:
+                self.name = old_name
+                logger.info(
+                    f"Switch model from {old_name} to {new_name} failed, rollback"
+                )
+                self.model = self.init_model(
+                    old_name, switch_mps_device(old_name, self.device), **self.kwargs
+                )
+                raise e
