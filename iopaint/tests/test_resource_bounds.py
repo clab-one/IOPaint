@@ -117,11 +117,9 @@ def test_scattered_mask_does_not_multiply_inference():
 
     # 이 마스크가 실제로 상한을 넘는 연결요소를 만드는지 먼저 확인한다.
     # 안 넘으면 이 시험은 아무것도 검사하지 않는다.
-    from iopaint.helper import boxes_from_mask
-
-    assert len(boxes_from_mask(mask)) > InpaintModel.MAX_CROP_BOXES, "표본이 상한을 넘지 않는다"
-
     model = _CountingModel()
+    assert len(model._bounded_boxes(mask)) == 1, "표본이 합치기 경로로 가지 않는다"
+
     model(image, mask, InpaintRequest(hd_strategy=HDStrategy.CROP))
 
     assert model.calls <= InpaintModel.MAX_CROP_BOXES, (
@@ -146,3 +144,61 @@ def test_few_boxes_are_left_alone():
     model = _CountingModel()
     model(image, mask, InpaintRequest(hd_strategy=HDStrategy.CROP))
     assert model.calls == 2, f"박스 2개인데 추론 {model.calls}회"
+
+
+def test_component_analysis_cost_is_bounded():
+    """성분을 세는 일 자체가 묶여 있는가.
+
+    처음 고칠 때는 개수만 확인했다. 그런데 그 확인에 닿기 전에
+    `cv2.findContours` 가 모든 윤곽을 만든다 - 6000² 체커보드(1픽셀 성분
+    9백만 개)에서 41.6초와 6.1GB 였다. 그 동안 _model_lock 을 쥐고 있으므로
+    다른 모든 지우기가 멈춘다.
+
+    지금은 축소한 마스크에서만 분석한다. 이 시험은 그 비용이 실제로 묶여
+    있는지 시간과 메모리로 본다.
+    """
+    import resource
+    import time
+
+    def rss_mb() -> float:
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1 << 20)
+
+    side = 6000
+    mask = np.zeros((side, side), np.uint8)
+    mask[::2, ::2] = 255  # 성분 9백만 개
+
+    model = _CountingModel()
+    before = rss_mb()
+    started = time.monotonic()
+    boxes = model._bounded_boxes(mask)
+    elapsed = time.monotonic() - started
+    grew = rss_mb() - before
+
+    assert len(boxes) >= 1
+    # 넉넉한 상한이다. findContours 경로는 41.6초·6.1GB 였다.
+    assert elapsed < 5.0, f"분석에 {elapsed:.1f}초 걸렸다 - 묶이지 않았다"
+    assert grew < 1500, f"RSS 가 {grew:.0f}MiB 늘었다 - 묶이지 않았다"
+
+
+def test_merged_box_covers_the_whole_mask():
+    """합친 박스가 마스크를 전부 덮는가.
+
+    축소 좌표를 되돌릴 때 안쪽으로 깎으면 마스크의 끝이 크롭 밖에 남아
+    **그 부분이 지워지지 않는다** - 결과에 원본 조각이 남고, 사용자는
+    "덜 지워졌다" 고 본다. 바깥으로 넓혀야 한다.
+    """
+    side = 4000
+    mask = np.zeros((side, side), np.uint8)
+    # 모서리에 점을 흩어 상한을 넘기고, 극단 좌표를 포함시킨다.
+    mask[7:9, 11:13] = 255
+    mask[side - 9 : side - 7, side - 13 : side - 11] = 255
+    mask[::37, ::37] = 255
+
+    model = _CountingModel()
+    boxes = model._bounded_boxes(mask)
+    assert len(boxes) == 1, "합치기 경로가 아니다"
+
+    x0, y0, x1, y1 = boxes[0]
+    ys, xs = np.nonzero(mask > 0)
+    assert x0 <= xs.min() and x1 >= xs.max() + 1, f"x 범위가 마스크를 덮지 않는다 ({x0},{x1})"
+    assert y0 <= ys.min() and y1 >= ys.max() + 1, f"y 범위가 마스크를 덮지 않는다 ({y0},{y1})"
