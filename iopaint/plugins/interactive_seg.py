@@ -7,6 +7,9 @@ from loguru import logger
 
 from iopaint.helper import download_model
 from iopaint.plugins.base_plugin import BasePlugin
+# 표는 iopaint.weights 한 곳에만 둔다 - 사본을 만들면 어긋나도
+# 조용히 두 번 받을 뿐이라 드러나지 않는다.
+from iopaint.weights import SEGMENT_ANYTHING_MODELS
 from iopaint.plugins.segment_anything import SamPredictor, sam_model_registry
 from iopaint.plugins.segment_anything.predictor_hq import SamHQPredictor
 from iopaint.plugins.segment_anything2.build_sam import build_sam2
@@ -14,68 +17,6 @@ from iopaint.plugins.segment_anything2.sam2_image_predictor import SAM2ImagePred
 from iopaint.schema import RunPluginRequest
 
 # 从小到大
-SEGMENT_ANYTHING_MODELS = {
-    "vit_b": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
-        "md5": "01ec64d29a2fca3f0661936605ae66f8",
-    },
-    "vit_l": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth",
-        "md5": "0b3195507c641ddb6910d2bb5adee89c",
-    },
-    "vit_h": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
-        "md5": "4b8939a88964f0f4ff5f5b2642c598a6",
-    },
-    "mobile_sam": {
-        "url": "https://github.com/Sanster/models/releases/download/MobileSAM/mobile_sam.pt",
-        "md5": "f3c0d8cda613564d499310dab6c812cd",
-    },
-    "sam_hq_vit_b": {
-        "url": "https://huggingface.co/lkeab/hq-sam/resolve/main/sam_hq_vit_b.pth",
-        "md5": "c6b8953247bcfdc8bb8ef91e36a6cacc",
-    },
-    "sam_hq_vit_l": {
-        "url": "https://huggingface.co/lkeab/hq-sam/resolve/main/sam_hq_vit_l.pth",
-        "md5": "08947267966e4264fb39523eccc33f86",
-    },
-    "sam_hq_vit_h": {
-        "url": "https://huggingface.co/lkeab/hq-sam/resolve/main/sam_hq_vit_h.pth",
-        "md5": "3560f6b6a5a6edacd814a1325c39640a",
-    },
-    "sam2_tiny": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt",
-        "md5": "99eacccce4ada0b35153d4fd7af05297",
-    },
-    "sam2_small": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt",
-        "md5": "7f320dbeb497330a2472da5a16c7324d",
-    },
-    "sam2_base": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_base_plus.pt",
-        "md5": "09dc5a3d7719f64aaea1d37341ef26f2",
-    },
-    "sam2_large": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt",
-        "md5": "08083462423be3260cd6a5eef94dc01c",
-    },
-    "sam2_1_tiny": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt",
-        "md5": "6aa6761c9da74fbaa74b4c790a0a2007",
-    },
-    "sam2_1_small": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt",
-        "md5": "51713b3d1994696d27f35f9c6de6f5ef",
-    },
-    "sam2_1_base": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt",
-        "md5": "ec7bd7d23d280d5e3cfa45984c02eda5",
-    },
-    "sam2_1_large": {
-        "url": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt",
-        "md5": "2b30654b6112c42a115563c638d238d9",
-    },
-}
 
 
 class InteractiveSeg(BasePlugin):

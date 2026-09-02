@@ -258,9 +258,7 @@ def test_prefetch_knows_every_weight_the_manifest_asks_for(deployment):
     모르는 이름을 주면 initContainer 가 SystemExit 으로 죽고 파드는
     Init:Error 에 멈춘다. 오타 하나로 서비스가 안 뜬다.
     """
-    from iopaint.prefetch import _specs
-
-    known = set(_specs())
+    known = _known_weight_names()
     for c in _pod_spec(deployment).get("initContainers", []):
         for name in _model_args(c.get("command", [])):
             assert name in known, (
@@ -287,3 +285,38 @@ def _model_args(command: list[str]) -> list[str]:
         elif not token.startswith("-"):
             names.append(token)
     return names
+
+
+def _known_weight_names() -> set[str]:
+    """`iopaint.prefetch` 가 받아들이는 이름 전부.
+
+    **`iopaint.weights` 만 읽는다.** prefetch 를 import 하면 loguru 와 torch 가
+    따라온다. 이 파일은 CI 의 validate 잡이 pytest+pyyaml 만 깔고 돌리는
+    것이라 그 순간 잡이 죽는다 - 실제로 한 번 죽였다. 못 도는 가드는 없는
+    가드고, 그러면 build 가 검사 없이 통과한다.
+
+    두 모듈이 같은 표를 보므로 여기서 이름을 다시 만들어도 어긋나지 않는다.
+    """
+    from iopaint import weights
+
+    names = set(weights.ERASE_WEIGHTS)
+    for prefix, table in (
+        ("sam", weights.SEGMENT_ANYTHING_MODELS),
+        ("realesrgan", weights.REAL_ESRGAN_WEIGHTS),
+        ("face", weights.FACE_RESTORE_WEIGHTS),
+    ):
+        names |= {f"{prefix}:{k}" for k in table}
+    return names
+
+
+def test_guard_sees_the_same_names_prefetch_accepts():
+    """가벼운 가드와 실제 prefetch 가 같은 이름 집합을 봐야 한다.
+
+    가드는 torch 를 피하려고 이름을 스스로 만든다. 그 목록이 prefetch 가
+    실제로 받아들이는 것과 갈라지면, 매니페스트가 통과하고도 initContainer 가
+    죽는다 - 가드가 있는데 못 막는 최악의 형태다.
+    """
+    pytest.importorskip("torch", reason="무거운 쪽은 로컬과 build 잡에서만 검사한다")
+    from iopaint.prefetch import _specs
+
+    assert _known_weight_names() == set(_specs())

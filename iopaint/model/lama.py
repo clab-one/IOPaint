@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import torch
 
+from iopaint.weights import ERASE_WEIGHTS
 from iopaint.helper import (
     norm_img,
     get_cache_path_by_url,
@@ -13,11 +14,11 @@ from iopaint.helper import (
 from iopaint.schema import InpaintRequest
 from .base import InpaintModel
 
-LAMA_MODEL_URL = os.environ.get(
-    "LAMA_MODEL_URL",
-    "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt",
-)
-LAMA_MODEL_MD5 = os.environ.get("LAMA_MODEL_MD5", "e3aa4aaa15225a33ec84f9f4bc47e500")
+# 출처는 iopaint.weights 한 곳에만 둔다. 사본을 만들면 어긋나도 조용히 두 번
+# 받을 뿐이라 드러나지 않는다. 환경변수 우회는 그대로 남긴다 - 다른 미러를
+# 쓰는 경로가 upstream 부터 있었다.
+LAMA_MODEL_URL = os.environ.get("LAMA_MODEL_URL", ERASE_WEIGHTS["lama"]["url"])
+LAMA_MODEL_MD5 = os.environ.get("LAMA_MODEL_MD5", ERASE_WEIGHTS["lama"]["md5"])
 
 
 class LaMa(InpaintModel):

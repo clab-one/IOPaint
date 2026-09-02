@@ -44,22 +44,36 @@ def _specs() -> dict[str, tuple[str, str]]:
     끼우므로(`--interactive-seg-model`) 배포가 고른 것만 받으면 된다.
     """
     from iopaint.model.lama import LAMA_MODEL_MD5, LAMA_MODEL_URL
-    from iopaint.plugins.interactive_seg import SEGMENT_ANYTHING_MODELS
-    from iopaint.plugins.realesrgan import REAL_ESRGAN_MODELS
 
     specs = {"lama": (LAMA_MODEL_URL, LAMA_MODEL_MD5)}
-
-    # SAM 계열. 표를 그대로 쓴다 - 여기 URL 을 옮겨 적으면 플러그인이 받는
-    # 것과 어긋날 수 있고, 어긋나도 조용히 두 번 받을 뿐이라 안 드러난다.
-    for key, spec in SEGMENT_ANYTHING_MODELS.items():
-        specs[f"sam:{key}"] = (spec["url"], spec["md5"])
-
-    # 키가 enum 이라 값으로 눕힌다 - CLI 가 넘기는 문자열과 같아야
-    # `--interactive-seg-model` 처럼 배포 인자에서 그대로 쓸 수 있다.
-    for key, spec in REAL_ESRGAN_MODELS.items():
-        specs[f"realesrgan:{key.value}"] = (spec["url"], spec["model_md5"])
-
+    for prefix, table in _tables().items():
+        for key, spec in table.items():
+            specs[f"{prefix}:{key}"] = (spec["url"], spec["md5"])
     return specs
+
+
+def _tables() -> dict[str, dict]:
+    """접두어 → 가중치 표.
+
+    `iopaint.weights` 만 읽는다. 그 모듈은 아무것도 import 하지 않으므로
+    torch 없는 CI 잡에서도 이 함수를 부를 수 있다 - 단, `_specs()` 는
+    lama 때문에 여전히 무겁다. 매니페스트를 대조하는 쪽은 이것을 쓴다.
+
+    접두어는 배포 인자가 부르는 이름의 앞부분이다(`sam:mobile_sam`).
+    플러그인 이름이 아니라 가중치 단위다 - 같은 플러그인이 모델을 바꿔
+    끼우므로 배포가 고른 것만 받으면 된다.
+    """
+    from iopaint.weights import (
+        FACE_RESTORE_WEIGHTS,
+        REAL_ESRGAN_WEIGHTS,
+        SEGMENT_ANYTHING_MODELS,
+    )
+
+    return {
+        "sam": SEGMENT_ANYTHING_MODELS,
+        "realesrgan": REAL_ESRGAN_WEIGHTS,
+        "face": FACE_RESTORE_WEIGHTS,
+    }
 
 
 def _seed_candidate(seed_root: str, path: str) -> str:
