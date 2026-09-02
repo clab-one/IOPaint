@@ -65,8 +65,11 @@ def test_unsupported_capability_is_rejected_before_taking_a_slot():
     api = _api_with({"RemoveBG": _FakePlugin()})
     req = type("R", (), {"name": "RemoveBG"})()
 
+    # gen_image 로 검사한다. gen_mask 라우트는 지웠다 - 앱은 Vision
+    # 온디바이스 마스크를 쓴다. 불변식("문 앞에서 거절, 슬롯 점유 0")은
+    # 남은 라우트에서도 같아야 한다.
     with pytest.raises(HTTPException) as e:
-        api.api_run_plugin_gen_mask(req)
+        api.api_run_plugin_gen_image(req)
 
     assert e.value.status_code == 422
     assert api.admission.entered == 0
@@ -155,56 +158,13 @@ class _SwappablePlugin:
         return np.zeros((2, 2, 3), dtype=np.uint8)
 
 
-def test_plugin_swap_does_not_expose_a_half_swapped_plugin(monkeypatch):
-    """플러그인 모델 교체 중에 도착한 요청이 반쯤 바뀐 상태를 보지 않는다.
-
-    inpaint 는 ModelManager 안에서 막았지만 플러그인은 upstream 클래스라
-    Api 가 막아야 한다. wave 3~5 에서 RealESRGAN·GFPGAN·SAM 이 붙으면
-    실제로 부딪히는 경로다.
-    """
-    from iopaint.api import Api
-
-    plugin = _SwappablePlugin()
-    api = _api_with({"P": plugin})
-    monkeypatch.setattr("iopaint.api.torch_gc", lambda: None)
-    monkeypatch.setattr(
-        "iopaint.api.decode_base64_to_image", lambda *a, **k: (None, None, {}, "png")
-    )
-    monkeypatch.setattr("iopaint.api.pil_to_bytes", lambda *a, **k: b"")
-    monkeypatch.setattr("iopaint.api.concat_alpha_channel", lambda img, a: img)
-    monkeypatch.setattr("iopaint.api.cv2.cvtColor", lambda img, code: img)
-    api.config = type("C", (), {"quality": 95, "remove_bg_model": None})()
-
-    t = threading.Thread(
-        target=lambda: Api.api_switch_plugin_model(
-            api, type("R", (), {"plugin_name": "P", "model_name": "new"})()
-        )
-    )
-    t.start()
-    time.sleep(0.05)  # 모델이 None 인 구간
-    Api.api_run_plugin_gen_image(api, type("R", (), {"name": "P", "image": ""})())
-    t.join()
-
-    assert plugin.observed == ["new"], f"반쯤 바뀐 플러그인을 봤다: {plugin.observed}"
-
-
-# --- 로컬 CPU 직렬화 --------------------------------------------------------
+# `/api/v1/switch_plugin_model` 라우트를 지웠으므로 그 경쟁 시험도 지웠다.
 #
-# 입장 제어의 --inflight 는 이제 5 다(로컬 1 + 원격 4). 그 값이 1 이던 시절에는
-# 그것 하나가 모든 CPU 작업을 직렬화했지만, 지금은 아니다. 로컬 CPU 를 지키는
-# 것은 각 경로가 잡는 락이다:
+# `_plugin_lock` 은 남긴다. 이제 그것을 잡는 곳은 gen_image 하나뿐이지만,
+# 플러그인의 CPU 작업을 직렬화하는 역할이 그대로 남아 있다 - 여러 요청이
+# 동시에 RealESRGAN·GFPGAN 을 돌리면 코어를 서로 뺏는다.
 #
-#   session erase / api_inpaint   ModelManager._model_lock
-#   plugin gen_image / gen_mask   Api._plugin_lock
-#
-# **두 락 모두 CPU 때문에 생긴 것이 아니다.** _model_lock 은 `del self.model`
-# 경쟁 때문에, _plugin_lock 은 switch_model 경쟁 때문에 생겼다. 즉 지금의 CPU
-# 보호는 우연이고, 누가 두 락을 본래 목적대로 좁히면 - 예컨대 _model_lock 을
-# del 구간만 감싸게 - 512² 100건에 컨테이너가 죽던 사고가 조용히 돌아온다.
-#
-# 그래서 우연에 기대지 않고 여기서 불변식으로 못박는다: inflight 가 몇이든
-# 로컬 CPU 작업은 겹치지 않는다.
-
+# 런타임 모델 교체를 다시 열 거면 이 시험도 되살릴 것. git 이력에 있다.
 
 class _OverlapWatch:
     """동시에 몇 개가 몸통에 들어와 있었는지 최대값을 센다."""
@@ -228,6 +188,7 @@ def _hammer(fn, n=6):
     ts = [threading.Thread(target=fn) for _ in range(n)]
     [t.start() for t in ts]
     [t.join() for t in ts]
+
 
 
 def test_model_calls_never_overlap_whatever_inflight_says():

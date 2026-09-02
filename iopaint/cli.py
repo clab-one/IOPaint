@@ -14,6 +14,22 @@ from iopaint.schema import InteractiveSegModel, Device, RealESRGANModel, RemoveB
 
 # FOLIO fork: install-plugins-packages / download / list / run(batch) /
 # start-web-config 를 들어냈다. 서버는 헤드리스로만 뜬다.
+def make_app():
+    """배포와 같은 설정의 FastAPI 앱.
+
+    시험이 이것을 부른다. `FastAPI()` 를 시험이 따로 만들면 배포와 다른
+    앱을 검사하게 되고, 실제로 그렇게 해서 docs 노출을 못 잡았다.
+
+    문서 UI 와 스키마를 끈다. 기본값으로 두면 /docs · /redoc ·
+    /openapi.json 이 열린다. 라우트를 13개에서 5개로 줄여 놓고 그 5개의
+    스키마를 인터넷에 게시하면 감축의 절반이 무의미하다 - 필드 이름·타입·
+    기본값이 그대로 나간다.
+    """
+    from fastapi import FastAPI
+
+    return FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+
 typer_app = typer.Typer(pretty_exceptions_show_locals=False, add_completion=False)
 
 
@@ -91,7 +107,7 @@ def start(
     from iopaint.api import Api
     from iopaint.schema import ApiConfig
 
-    app = FastAPI()
+    app = make_app()
 
     api_config = ApiConfig(
         host=host,

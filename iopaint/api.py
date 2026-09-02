@@ -46,15 +46,11 @@ from iopaint.plugins.base_plugin import BasePlugin
 from iopaint.plugins.remove_bg import RemoveBG
 from iopaint.schema import (
     ApiConfig,
-    ServerConfigResponse,
     SwitchModelRequest,
     InpaintRequest,
     RunPluginRequest,
     PluginInfo,
-    AdjustMaskRequest,
     RemoveBGModel,
-    SwitchPluginModelRequest,
-    ModelInfo,
     InteractiveSegModel,
     RealESRGANModel,
 )
@@ -178,19 +174,33 @@ class Api:
         self.scheduler.start()
 
         # fmt: off
-        self.add_api_route("/api/v1/server-config", self.api_server_config, methods=["GET"],
-                           response_model=ServerConfigResponse)
-        self.add_api_route("/api/v1/model", self.api_current_model, methods=["GET"], response_model=ModelInfo)
-        self.add_api_route("/api/v1/model", self.api_switch_model, methods=["POST"], response_model=ModelInfo)
-        self.add_api_route("/api/v1/inpaint", self.api_inpaint, methods=["POST"])
-        self.add_api_route("/api/v1/switch_plugin_model", self.api_switch_plugin_model, methods=["POST"])
-        self.add_api_route("/api/v1/run_plugin_gen_mask", self.api_run_plugin_gen_mask, methods=["POST"])
+        # **클라이언트가 부르는 것만 남긴다.**
+        #
+        # upstream 은 13개를 열어 뒀고 FOLIO 앱은 그중 5개만 쓴다
+        # (folio-core 의 FolioAIClient). 남은 8개는 기능이 아니라 공격
+        # 표면이었다 - 인증이 붙기 전에도, 붙은 뒤에도.
+        #
+        # 지운 것과 그 이유:
+        #
+        #   /api/v1/adjust_mask         kernel_size 무제한 → (2k+1)² 바이트.
+        #                               150바이트 요청 하나로 컨테이너 OOMKill
+        #   /api/v1/inpaint             hd_strategy 가 str 이라 미지의 값이
+        #                               전체 해상도 추론으로 폴스루
+        #   /api/v1/model (GET·POST)    모델 언로드/재적재를 강제. 30바이트로
+        #                               추론 전면 정지
+        #   /api/v1/switch_plugin_model 무인증 HF 다운로드 유발 + 플러그인 락 점유
+        #   /api/v1/run_plugin_gen_mask 앱은 Vision 온디바이스 마스크를 쓴다
+        #   /api/v1/save_image          --output-dir 이 붙는 순간 임의 파일 쓰기
+        #   /api/v1/server-config       모델·플러그인 재고 정찰
+        #
+        # 셋은 입장 제어(admission) 밖이기도 했다 - adjust_mask, model,
+        # switch_plugin_model. --inflight=5 로 만든 방어선이 그것들에는
+        # 걸리지 않았다.
+        #
+        # 다시 열 거면 인증과 입력 상한을 함께 넣을 것. 그냥 되살리면
+        # 위 목록이 그대로 돌아온다.
         self.add_api_route("/api/v1/run_plugin_gen_image", self.api_run_plugin_gen_image, methods=["POST"])
-        self.add_api_route("/api/v1/adjust_mask", self.api_adjust_mask, methods=["POST"])
-        self.add_api_route("/api/v1/save_image", self.api_save_image, methods=["POST"])
         # 편집 세션 (AI-003). 사진을 한 번만 올리고 그 뒤로는 마스크만 보낸다.
-        # 무상태 /api/v1/inpaint 는 그대로 둔다 - 한 번 쓰고 마는 호출에는
-        # 세션이 과하고, 기존 계약을 깰 이유가 없다.
         self.add_api_route("/v1/edit-sessions", self.api_session_create, methods=["POST"])
         self.add_api_route("/v1/edit-sessions/{sid}/erase", self.api_session_erase, methods=["POST"])
         self.add_api_route("/v1/edit-sessions/{sid}/result", self.api_session_result, methods=["GET"])
@@ -205,34 +215,6 @@ class Api:
 
     def add_api_route(self, path: str, endpoint, **kwargs):
         return self.app.add_api_route(path, endpoint, **kwargs)
-
-    def api_save_image(self, file: UploadFile):
-        # Sanitize filename to prevent path traversal
-        safe_filename = Path(file.filename).name  # Get just the filename component
-
-        # Construct the full path within output_dir
-        output_path = self.config.output_dir / safe_filename
-
-        # Ensure output directory exists
-        if not self.config.output_dir or not self.config.output_dir.exists():
-            raise HTTPException(
-                status_code=400,
-                detail="Output directory not configured or doesn't exist",
-            )
-
-        # Read and write the file
-        origin_image_bytes = file.file.read()
-        with open(output_path, "wb") as fw:
-            fw.write(origin_image_bytes)
-
-    # --- 편집 세션 (AI-003) ------------------------------------------------
-    #
-    # 계약은 하나다: **같은 세션의 연산은 순서가 있다.** 두 번째 지우기는 첫
-    # 번째 결과 위에서 일어난다. 무상태 /api/v1/inpaint 로는 그 순서를 서버가
-    # 알 수 없어 클라이언트가 결과를 받아 다시 올려야 했고, 왕복마다 전체
-    # 이미지가 오갔다.
-    #
-    # 직렬화는 세션 단위다. 서로 다른 세션은 서로를 기다리지 않는다.
 
     def _session_or_http(self, sid: str):
         try:
@@ -355,83 +337,6 @@ class Api:
         ready = self.model_manager is not None
         return JSONResponse({"ready": ready}, status_code=200 if ready else 503)
 
-    def api_current_model(self) -> ModelInfo:
-        return self.model_manager.current_model
-
-    def api_switch_model(self, req: SwitchModelRequest) -> ModelInfo:
-        if req.name == self.model_manager.name:
-            return self.model_manager.current_model
-        self.model_manager.switch(req.name)
-        return self.model_manager.current_model
-
-    def api_switch_plugin_model(self, req: SwitchPluginModelRequest):
-        if req.plugin_name in self.plugins:
-            with self._plugin_lock:
-                self.plugins[req.plugin_name].switch_model(req.model_name)
-            if req.plugin_name == RemoveBG.name:
-                self.config.remove_bg_model = req.model_name
-            if req.plugin_name == RealESRGANUpscaler.name:
-                self.config.realesrgan_model = req.model_name
-            if req.plugin_name == InteractiveSeg.name:
-                self.config.interactive_seg_model = req.model_name
-            torch_gc()
-
-    def api_server_config(self) -> ServerConfigResponse:
-        plugins = []
-        for it in self.plugins.values():
-            plugins.append(
-                PluginInfo(
-                    name=it.name,
-                    support_gen_image=it.support_gen_image,
-                    support_gen_mask=it.support_gen_mask,
-                )
-            )
-
-        return ServerConfigResponse(
-            plugins=plugins,
-            modelInfos=self.model_manager.scan_models(),
-            removeBGModel=self.config.remove_bg_model,
-            removeBGModels=RemoveBGModel.values(),
-            realesrganModel=self.config.realesrgan_model,
-            realesrganModels=RealESRGANModel.values(),
-            interactiveSegModel=self.config.interactive_seg_model,
-            interactiveSegModels=InteractiveSegModel.values(),
-            enableAutoSaving=self.config.output_dir is not None,
-        )
-
-    def api_inpaint(self, req: InpaintRequest):
-        with self.admission.admit():
-            return self._api_inpaint(req)
-
-    def _api_inpaint(self, req: InpaintRequest):
-        image, alpha_channel, infos, ext = decode_base64_to_image(req.image)
-        mask, _, _, _ = decode_base64_to_image(req.mask, gray=True)
-        logger.info(f"image ext: {ext}")
-
-        mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)[1]
-        if image.shape[:2] != mask.shape[:2]:
-            raise HTTPException(
-                400,
-                detail=f"Image size({image.shape[:2]}) and mask size({mask.shape[:2]}) not match.",
-            )
-
-        start = time.time()
-        rgb_np_img = self.model_manager(image, mask, req)
-        logger.info(f"process time: {(time.time() - start) * 1000:.2f}ms")
-        torch_gc()
-
-        rgb_np_img = cv2.cvtColor(rgb_np_img.astype(np.uint8), cv2.COLOR_BGR2RGB)
-        rgb_res = concat_alpha_channel(rgb_np_img, alpha_channel)
-
-        res_img_bytes = pil_to_bytes(
-            Image.fromarray(rgb_res),
-            ext=ext,
-            quality=self.config.quality,
-            infos=infos,
-        )
-
-        return Response(content=res_img_bytes, media_type=f"image/{ext}")
-
     def _require_plugin(self, name: str, *, gen_image: bool):
         """자리를 잡기 전에 거절할 수 있는 것은 먼저 거절한다.
 
@@ -480,27 +385,6 @@ class Api:
             ),
             media_type=f"image/{ext}",
         )
-
-    def api_run_plugin_gen_mask(self, req: RunPluginRequest):
-        self._require_plugin(req.name, gen_image=False)
-        with self.admission.admit():
-            return self._api_run_plugin_gen_mask(req)
-
-    def _api_run_plugin_gen_mask(self, req: RunPluginRequest):
-        rgb_np_img, _, _, _ = decode_base64_to_image(req.image)
-        with self._plugin_lock:
-            bgr_or_gray_mask = self.plugins[req.name].gen_mask(rgb_np_img, req)
-        torch_gc()
-        res_mask = gen_frontend_mask(bgr_or_gray_mask)
-        return Response(
-            content=numpy_to_bytes(res_mask, "png"),
-            media_type="image/png",
-        )
-
-    def api_adjust_mask(self, req: AdjustMaskRequest):
-        mask, _, _, _ = decode_base64_to_image(req.mask, gray=True)
-        mask = adjust_mask(mask, req.kernel_size, req.operate)
-        return Response(content=numpy_to_bytes(mask, "png"), media_type="image/png")
 
     def launch(self):
         self.app.include_router(self.router)
