@@ -210,13 +210,33 @@ class CoreMLBackend:
         timeout: float = 5.0,
         seed_ms: float = 300.0,
         probe_timeout: float = 3.0,
-        slots: int = 4,
+        # **1 이다.** 예전엔 4 였다 - "원격은 네트워크만 쓰니 겹쳐도 된다" 는
+        # 생각이었는데, 겹치는 비용이 네트워크가 아니라 저쪽 가속기에 있었다.
+        #
+        # 워커를 직접 때려서 잰 값(800², mTLS, 같은 호스트):
+        #
+        #     conc=1   5.43 req/s   p50   184ms
+        #     conc=2   6.03 req/s   p50   330ms
+        #     conc=4   6.30 req/s   p50   634ms
+        #     conc=8   6.53 req/s   p50  1220ms
+        #
+        # Core ML 안에서 이미 직렬화된다. 겹쳐서 얻는 것은 처리량 +20% 뿐이고
+        # 지연은 6.6 배가 된다.
+        #
+        # 문제는 지연 자체가 아니라 **그 대기열이 여기서 안 보인다**는 것이다.
+        # 노드 선택은 estimated_ms = (inflight+1) x p50 으로 한다. 슬롯이 여럿
+        # 이면 줄이 워커 안에 서고, 그 경합이 관측 p50 을 부풀린다 - 실측
+        # /healthz 의 coreml p50 이 1097ms 로 경합 없는 184ms 의 6 배였다.
+        # 부풀린 p50 이 추정치를 밀어올려 20 배 느린 로컬(2870ms)과 가까워지면
+        # 스케줄러가 스스로 느린 쪽을 고른다.
+        #
+        # 슬롯이 하나면 줄이 이쪽에 서고 inflight 로 보인다. 추정식이 다시
+        # 사실을 반영한다.
+        slots: int = 1,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.stats = Stats(seed_ms=seed_ms)
-        # 원격은 네트워크만 쓴다 - 로컬 CPU 를 먹지 않으므로 겹쳐도 된다.
-        # 워커 실측 conc=4 에서 3.06 req/s 로 포화한다.
         self.slots = threading.BoundedSemaphore(slots)
         self._ctx = ssl.create_default_context(cafile=ca)
         self._ctx.load_cert_chain(cert, key)
