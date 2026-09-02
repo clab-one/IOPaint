@@ -63,16 +63,13 @@ def _tables() -> dict[str, dict]:
     플러그인 이름이 아니라 가중치 단위다 - 같은 플러그인이 모델을 바꿔
     끼우므로 배포가 고른 것만 받으면 된다.
     """
-    from iopaint.weights import (
-        FACE_RESTORE_WEIGHTS,
-        REAL_ESRGAN_WEIGHTS,
-        SEGMENT_ANYTHING_MODELS,
-    )
+    from iopaint import weights
 
     return {
-        "sam": SEGMENT_ANYTHING_MODELS,
-        "realesrgan": REAL_ESRGAN_WEIGHTS,
-        "face": FACE_RESTORE_WEIGHTS,
+        "sam": weights.SEGMENT_ANYTHING_MODELS,
+        "realesrgan": weights.REAL_ESRGAN_WEIGHTS,
+        "face": weights.FACE_RESTORE_WEIGHTS,
+        "facexlib": weights.FACEXLIB_WEIGHTS,
     }
 
 
@@ -88,6 +85,9 @@ def _seed_candidate(seed_root: str, path: str) -> str:
 
 def prefetch(name: str, seed_from: str | None = None) -> str:
     from iopaint.helper import download_model, get_cache_path_by_url, md5sum
+
+    if name.startswith("hf:"):
+        return _prefetch_hf(name)
 
     specs = _specs()
     if name not in specs:
@@ -120,6 +120,30 @@ def prefetch(name: str, seed_from: str | None = None) -> str:
         logger.info(f"{name}: seed 없음/불일치 ({src}), 받는다")
 
     download_model(url, expected)
+    logger.info(f"{name}: 준비됨 ({path})")
+    return path
+
+
+def _prefetch_hf(name: str) -> str:
+    """Hugging Face 저장소에서 받는다.
+
+    URL 갈래와 나누는 이유는 캐시가 다르기 때문이다. 플러그인은
+    `hf_hub_download` 로 부르고 그것은 `$XDG_CACHE_HOME/huggingface` 를 본다 -
+    torch 쪽 checkpoints 에 같은 파일을 갖다 놔도 거기서 찾지 않는다.
+
+    md5 를 보지 않는 것도 의도다. hub 가 etag 로 무결성을 확인하고 중단된
+    받기를 이어받는다. 우리가 md5 를 덧대면 hub 의 재개 로직과 싸운다.
+    """
+    from huggingface_hub import hf_hub_download
+
+    from iopaint.weights import HF_WEIGHTS
+
+    key = name[len("hf:") :]
+    if key not in HF_WEIGHTS:
+        raise SystemExit(f"unknown hf model: {key}. known: {sorted(HF_WEIGHTS)}")
+
+    spec = HF_WEIGHTS[key]
+    path = hf_hub_download(spec["repo"], spec["file"])
     logger.info(f"{name}: 준비됨 ({path})")
     return path
 

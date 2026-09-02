@@ -214,7 +214,18 @@ def test_prefetch_init_does_not_mount_over_its_own_seed(deployment):
 _PLUGIN_WEIGHTS = {
     "--enable-interactive-seg": lambda a: f"sam:{_flag(a, '--interactive-seg-model', 'vit_l')}",
     "--enable-realesrgan": lambda a: f"realesrgan:{_flag(a, '--realesrgan-model', 'realesr-general-x4v3')}",
+    # 얼굴 복원은 본 가중치 하나로 끝나지 않는다. facexlib 이 검출·파싱
+    # 모델을 따로 받으므로 셋 다 있어야 기동 중 다운로드가 없다.
+    "--enable-gfpgan": lambda a: "face:GFPGANv1.4",
+    "--enable-restoreformer": lambda a: "face:RestoreFormer",
+    "--enable-remove-bg": lambda a: f"hf:{_HF_ALIAS[_flag(a, '--remove-bg-model', 'briaai/RMBG-1.4')]}",
 }
+
+#: 얼굴 검출·파싱은 어느 복원 모델을 켜든 함께 필요하다.
+_FACE_HELPERS = ("facexlib:detection_Resnet50_Final", "facexlib:parsing_parsenet")
+
+#: CLI 가 받는 모델 이름 → prefetch 가 부르는 이름.
+_HF_ALIAS = {"briaai/RMBG-1.4": "rmbg-1.4", "briaai/RMBG-2.0": "rmbg-2.0"}
 
 
 def _flag(args, name, default):
@@ -244,7 +255,14 @@ def test_enabled_plugins_have_their_weights_prefetched(deployment):
         for flag, weight_of in _PLUGIN_WEIGHTS.items():
             if flag not in args:
                 continue
-            want = weight_of(args)
+            wants = [weight_of(args)]
+            if flag in ("--enable-gfpgan", "--enable-restoreformer"):
+                wants += list(_FACE_HELPERS)
+            for want in wants:
+                _assert_prefetched(flag, want, prefetched)
+
+
+def _assert_prefetched(flag, want, prefetched):
             assert want in prefetched, (
                 f"{flag} 을 켰는데 {want!r} 가 프리페치 목록에 없다. "
                 f"현재 목록: {sorted(prefetched)}. "
@@ -304,6 +322,8 @@ def _known_weight_names() -> set[str]:
         ("sam", weights.SEGMENT_ANYTHING_MODELS),
         ("realesrgan", weights.REAL_ESRGAN_WEIGHTS),
         ("face", weights.FACE_RESTORE_WEIGHTS),
+        ("facexlib", weights.FACEXLIB_WEIGHTS),
+        ("hf", weights.HF_WEIGHTS),
     ):
         names |= {f"{prefix}:{k}" for k in table}
     return names
@@ -317,6 +337,10 @@ def test_guard_sees_the_same_names_prefetch_accepts():
     죽는다 - 가드가 있는데 못 막는 최악의 형태다.
     """
     pytest.importorskip("torch", reason="무거운 쪽은 로컬과 build 잡에서만 검사한다")
+    from iopaint import weights
     from iopaint.prefetch import _specs
 
-    assert _known_weight_names() == set(_specs())
+    # hf: 는 URL 갈래가 아니라 _prefetch_hf 가 따로 받는다. _specs 에 없는
+    # 것이 정상이므로 그만큼 빼고 견준다.
+    hf = {f"hf:{k}" for k in weights.HF_WEIGHTS}
+    assert _known_weight_names() - hf == set(_specs())

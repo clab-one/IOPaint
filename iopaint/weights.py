@@ -83,3 +83,28 @@ FACE_RESTORE_WEIGHTS = {
         "md5": "eaeeff6c4a1caa1673977cb374e6f699",
     },
 }
+
+#: GFPGAN 이 얼굴을 찾고 잘라내는 데 쓰는 보조 모델. 본 가중치와 별개로
+#: facexlib 이 같은 checkpoints 디렉터리에 받는다 - 빠뜨리면 얼굴 복원을
+#: 처음 부르는 순간 200MB 를 받는다.
+#:
+#: md5 는 upstream 이 공표하지 않아 받아서 계산했다. 값이 바뀌면 prefetch 가
+#: 지우고 다시 받으므로, 그때는 upstream 이 파일을 갈아 끼운 것이다.
+FACEXLIB_WEIGHTS = {
+    "detection_Resnet50_Final": {
+        "url": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth",
+        "md5": "bce939bc22d8cec91229716dd932e56e",
+    },
+    "parsing_parsenet": {
+        "url": "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth",
+        "md5": "33d9956898d4fa637c30eda7faa28496",
+    },
+}
+
+#: Hugging Face 저장소에서 오는 것. URL 이 아니라 repo+파일로 부르고, 캐시도
+#: torch 쪽이 아니라 $XDG_CACHE_HOME/huggingface 다. 그래서 prefetch 가 다른
+#: 갈래로 처리한다 - md5 대신 hub 자체의 무결성 검사에 맡긴다.
+HF_WEIGHTS = {
+    "rmbg-1.4": {"repo": "briaai/RMBG-1.4", "file": "model.pth"},
+    "rmbg-2.0": {"repo": "briaai/RMBG-2.0", "file": "model.safetensors"},
+}

@@ -63,6 +63,15 @@ spec:
             # test_deploy_consistency.py 가 활성 플러그인과 이 목록이
             # 어긋나면 CI 에서 떨어뜨린다.
             - sam:mobile_sam
+            - realesrgan:realesr-general-x4v3
+            - face:GFPGANv1.4
+            # GFPGAN 이 얼굴을 찾고 잘라내는 보조 모델. 본 가중치와 별개다 -
+            # 빠뜨리면 얼굴 복원을 처음 부르는 순간 200MB 를 받는다.
+            - facexlib:detection_Resnet50_Final
+            - facexlib:parsing_parsenet
+            # HF 저장소에서 온다. 캐시가 torch 쪽이 아니라
+            # $XDG_CACHE_HOME/huggingface 라 prefetch 가 다른 갈래로 받는다.
+            - hf:rmbg-1.4
           env:
             # prefetch 가 쓸 캐시 루트를 PVC 쪽으로 돌린다. 이미지의
             # XDG_CACHE_HOME=/models 를 여기서만 덮는다.
@@ -118,6 +127,29 @@ spec:
             - --enable-interactive-seg
             - --interactive-seg-model=mobile_sam
             - --interactive-seg-device=cpu
+            # wave 3 - 확대. 잘라낸 뒤 남은 해상도를 되살린다.
+            #
+            # realesr-general-x4v3 는 5MB 짜리 SRVGGNetCompact 다. 같은 표의
+            # x4plus 계열(RRDBNet, 64MB)이 품질은 낫지만 CPU 에서 몇 배
+            # 느리다. 플러그인이 512 타일로 잘라 도므로 큰 사진에서도 메모리는
+            # 평평하다.
+            - --enable-realesrgan
+            - --realesrgan-model=realesr-general-x4v3
+            - --realesrgan-device=cpu
+            # wave 4 - 얼굴 복원. 확대만 하면 얼굴이 뭉개진다.
+            #
+            # RealESRGAN 이 켜져 있으면 GFPGAN 이 그것을 배경 확대기로 쓴다
+            # (iopaint/api.py:_build_plugins). 순서가 아니라 존재가 조건이다.
+            - --enable-gfpgan
+            - --gfpgan-device=cpu
+            # wave 5 - 배경 제거.
+            #
+            # briaai/RMBG-1.4 다. rembg(u2net) 갈래는 onnxruntime 이 필요한데
+            # 이 fork 는 그것을 넣지 않았다 - 실행 런타임을 하나 더 들이는 값에
+            # 비해 얻는 것이 없다.
+            - --enable-remove-bg
+            - --remove-bg-model=briaai/RMBG-1.4
+            - --remove-bg-device=cpu
           ports:
             - name: http
               containerPort: 8080

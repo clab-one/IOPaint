@@ -21,9 +21,12 @@ class RemoveBG(BasePlugin):
     support_gen_image = True
 
     def __init__(self, model_name, device):
-        super().__init__()
+        # **super() 보다 먼저 둔다.** BasePlugin.__init__ 이 check_dep() 을
+        # 부르고, 그 검사는 고른 모델이 무엇이냐에 따라 답이 다르다.
+        # 뒤에 두면 검사 시점에 속성이 없어 AttributeError 로 죽는다.
         self.model_name = model_name
         self.device = device
+        super().__init__()
 
         if model_name.startswith("birefnet"):
             import rembg
@@ -93,13 +96,31 @@ class RemoveBG(BasePlugin):
         return output
 
     def check_dep(self):
+        """고른 모델이 실제로 필요로 하는 것만 본다.
+
+        예전에는 모델과 무관하게 rembg 를 요구했다. 이 fork 는 briaai 경로만
+        쓰고 그 경로는 torch 로 끝나는데, rembg(와 onnxruntime)가 없다는
+        이유로 플러그인 생성이 실패했다 - 쓰지도 않는 런타임 때문에 켜지지
+        않는 기능이다.
+
+        rembg 갈래를 지우지는 않았다. 모델 이름을 직접 주면 여전히 돌고,
+        그때는 여기서 정직하게 요구한다.
+        """
+        if self.model_name in (
+            RemoveBGModel.briaai_rmbg_1_4,
+            RemoveBGModel.briaai_rmbg_2_0,
+        ):
+            return None
+
         try:
-            import rembg
-        except ImportError as e:
+            import rembg  # noqa: F401
+        except ImportError:
             import traceback
 
-            error_msg = traceback.format_exc()
-            return f"Install rembg failed, Error details:\n{error_msg}"
+            return (
+                f"{self.model_name} 은 rembg 가 필요하다 (briaai 계열은 아니다). "
+                f"Error details:\n{traceback.format_exc()}"
+            )
 
     def device_warning(self):
         if self.device == Device.cuda and self.model_name not in [
