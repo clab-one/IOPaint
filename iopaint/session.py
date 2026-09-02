@@ -41,6 +41,7 @@ tmpfs(`FOLIO_SESSION_DIR`, 배포에서 `medium: Memory` 12Gi)다. 사진은 디
 from __future__ import annotations
 
 import os
+import io
 import secrets
 import shutil
 import threading
@@ -49,6 +50,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from loguru import logger
+from PIL import Image
+
+from iopaint.helper import _guard_pixels
 
 # 세션 하나가 들고 있는 파일. 이름을 고정해 두면 디렉터리만 지우면 끝난다.
 ORIGINAL = "original"
@@ -111,6 +115,29 @@ class SessionStore:
             raise SessionError(
                 413, f"image too large: {len(image)} > {self.max_bytes} bytes"
             )
+
+        # **슬롯을 잡기 전에** 픽셀 수를 본다.
+        #
+        # 바이트 상한으로는 압축 폭탄이 안 막힌다 - 6400² 단색 PNG 는 20KB 도
+        # 안 된다. erase 에서 413 을 주는 것으로는 늦다: 그때는 이미 슬롯을
+        # 잡았고, 폭탄 32개면 TTL 이 끝날 때까지(20분) 정상 사용자가 세션을
+        # 못 만든다. 인증이 없으므로 누구나 할 수 있다.
+        #
+        # `Image.open` 은 헤더만 읽고 게으르게 돌아온다. 그래서 이 검사는
+        # 픽셀을 한 번도 만들지 않는다 - `_guard_pixels` 의 주석과 같은 이유다.
+        try:
+            with Image.open(io.BytesIO(image)) as probe:
+                _guard_pixels(probe, "session create")
+        except ValueError as e:
+            # 픽셀 상한 위반. erase 와 같은 코드로 답해야 호출자가 두 경로를
+            # 다르게 다루지 않는다.
+            raise SessionError(413, str(e)) from e
+        except SessionError:
+            raise
+        except Exception as e:
+            # 이미지가 아니다. 지금 거절하지 않으면 쓰레기가 슬롯을 먹고
+            # 첫 erase 에서야 실패한다.
+            raise SessionError(400, f"cannot read image: {e}") from e
 
         self.reap()  # 자리를 만들 수 있으면 만들고 센다
 

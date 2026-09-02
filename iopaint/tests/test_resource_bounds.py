@@ -7,6 +7,8 @@ FOLIO fork 가 추가한 시험이다. 독립 보안 검토에서 나온 critica
 """
 
 import io
+import pathlib
+import tempfile
 
 import numpy as np
 import pytest
@@ -202,3 +204,49 @@ def test_merged_box_covers_the_whole_mask():
     ys, xs = np.nonzero(mask > 0)
     assert x0 <= xs.min() and x1 >= xs.max() + 1, f"x 범위가 마스크를 덮지 않는다 ({x0},{x1})"
     assert y0 <= ys.min() and y1 >= ys.max() + 1, f"y 범위가 마스크를 덮지 않는다 ({y0},{y1})"
+
+
+def test_session_create_rejects_pixel_bomb_before_taking_a_slot():
+    """압축 폭탄으로 세션 슬롯을 고갈시킬 수 있는가.
+
+    바이트 상한만 보면 막히지 않는다 - 6400² 단색 PNG 는 20KB 도 안 된다.
+    erase 에서 413 을 주는 것으로는 늦다: 그때는 이미 슬롯을 잡았고, 폭탄
+    32개면 TTL 20분 동안 정상 사용자가 세션을 못 만든다. 인증이 없으므로
+    누구나 할 수 있다.
+
+    그래서 **슬롯을 잡기 전에** 헤더만 읽어 거절해야 한다.
+    """
+    from iopaint.session import SessionError, SessionStore
+
+    side = 6400  # 40.96M 픽셀 > 상한 40M
+    buf = io.BytesIO()
+    Image.new("RGB", (side, side), (7, 7, 7)).save(buf, "PNG")
+    bomb = buf.getvalue()
+    assert len(bomb) < 1_000_000, f"폭탄이 커서 바이트 상한에 걸린다 ({len(bomb)})"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = SessionStore(root=pathlib.Path(tmp), max_sessions=4, ttl=600)
+        for _ in range(6):  # 슬롯 수보다 많이 시도한다
+            with pytest.raises(SessionError) as excinfo:
+                store.create(bomb, "png")
+            assert excinfo.value.status == 413, f"413 이 아니라 {excinfo.value.status}"
+        assert store.stats()["sessions"] == 0, "거절했는데 슬롯을 먹었다"
+
+        # 정상 이미지는 그대로 통과해야 한다.
+        ok = io.BytesIO()
+        Image.new("RGB", (64, 64), (1, 2, 3)).save(ok, "PNG")
+        s = store.create(ok.getvalue(), "png")
+        assert s.alive
+        assert store.stats()["sessions"] == 1
+
+
+def test_session_create_rejects_garbage_without_taking_a_slot():
+    """이미지가 아닌 것도 슬롯을 먹지 못한다."""
+    from iopaint.session import SessionError, SessionStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = SessionStore(root=pathlib.Path(tmp), max_sessions=2, ttl=600)
+        with pytest.raises(SessionError) as excinfo:
+            store.create(b"not an image at all", "png")
+        assert excinfo.value.status == 400, f"400 이 아니라 {excinfo.value.status}"
+        assert store.stats()["sessions"] == 0
