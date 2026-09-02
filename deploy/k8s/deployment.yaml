@@ -56,6 +56,13 @@ spec:
             - --seed-from
             - /models
             - lama
+            # 아래는 활성화한 플러그인의 가중치다. 여기 빠뜨리면 플러그인이
+            # **파드 기동 중에** 직접 받는다 - 첫 기동이 다운로드만큼
+            # 길어지고, 네트워크가 없으면 아예 못 뜬다.
+            #
+            # test_deploy_consistency.py 가 활성 플러그인과 이 목록이
+            # 어긋나면 CI 에서 떨어뜨린다.
+            - sam:mobile_sam
           env:
             # prefetch 가 쓸 캐시 루트를 PVC 쪽으로 돌린다. 이미지의
             # XDG_CACHE_HOME=/models 를 여기서만 덮는다.
@@ -101,6 +108,16 @@ spec:
             # 이 값을 건드릴 거면 그것부터 읽을 것.
             - --inflight=5
             - --max-queue=8
+            # wave 2 - 대화형 분할. 사용자가 찍은 점 하나로 마스크를 만든다.
+            #
+            # mobile_sam 인 이유: 이 노드는 CPU 뿐이고 이 기능은 대화형이다.
+            # vit_h 는 2.4GB 라 PVC 와 기동 시간을 먹고 CPU 에서 초 단위로
+            # 답한다 - 점을 찍고 그만큼 기다리면 쓰지 않는다. mobile_sam 은
+            # 40MB 다. 품질이 모자라면 vit_b(375MB)가 다음 후보고, 바꾸는 데는
+            # 이 인자와 prefetch 목록 두 줄이면 된다.
+            - --enable-interactive-seg
+            - --interactive-seg-model=mobile_sam
+            - --interactive-seg-device=cpu
           ports:
             - name: http
               containerPort: 8080

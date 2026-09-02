@@ -202,3 +202,88 @@ def test_prefetch_init_does_not_mount_over_its_own_seed(deployment):
         f"initContainer 가 seed 경로 {seed} 를 볼륨으로 덮었다 - "
         "이미지의 baked 가중치가 가려져 복사할 것이 없다"
     )
+
+
+# --- 플러그인 -----------------------------------------------------------------
+
+#: 배포 인자에서 플러그인을 켜는 플래그 → 그 플러그인이 필요로 하는 가중치를
+#: `iopaint.prefetch` 이름으로 돌려주는 함수.
+#:
+#: 모델을 고르는 플래그가 따로 있으면 그것을 읽는다 - 기본값과 다른 모델을
+#: 켜 놓고 기본값만 프리페치하면 파드가 기동 중에 받는다.
+_PLUGIN_WEIGHTS = {
+    "--enable-interactive-seg": lambda a: f"sam:{_flag(a, '--interactive-seg-model', 'vit_l')}",
+    "--enable-realesrgan": lambda a: f"realesrgan:{_flag(a, '--realesrgan-model', 'realesr-general-x4v3')}",
+}
+
+
+def _flag(args, name, default):
+    for a in args:
+        if a.startswith(f"{name}="):
+            return a.split("=", 1)[1]
+    return default
+
+
+def test_enabled_plugins_have_their_weights_prefetched(deployment):
+    """켠 플러그인의 가중치는 initContainer 가 미리 받아야 한다.
+
+    플러그인은 생성 시점에 가중치를 스스로 받는다. 그 시점이 파드 기동
+    중이라, 여기 빠뜨리면 첫 기동이 다운로드만큼 길어진다. egress 가 막힌
+    환경이면 아예 뜨지 못한다.
+
+    사람이 두 목록을 대조하는 것으로는 못 막는다 - 켤 때는 인자만 보고,
+    initContainer 는 화면 위쪽에 있어 눈에 안 들어온다.
+    """
+    spec = _pod_spec(deployment)
+    prefetched = set()
+    for c in spec.get("initContainers", []):
+        prefetched |= set(_model_args(c.get("command", [])))
+
+    for c in spec.get("containers", []):
+        args = c.get("args", [])
+        for flag, weight_of in _PLUGIN_WEIGHTS.items():
+            if flag not in args:
+                continue
+            want = weight_of(args)
+            assert want in prefetched, (
+                f"{flag} 을 켰는데 {want!r} 가 프리페치 목록에 없다. "
+                f"현재 목록: {sorted(prefetched)}. "
+                "이대로면 파드가 기동 중에 가중치를 받는다."
+            )
+
+
+def test_prefetch_knows_every_weight_the_manifest_asks_for(deployment):
+    """매니페스트가 부르는 이름을 prefetch 가 알아야 한다.
+
+    모르는 이름을 주면 initContainer 가 SystemExit 으로 죽고 파드는
+    Init:Error 에 멈춘다. 오타 하나로 서비스가 안 뜬다.
+    """
+    from iopaint.prefetch import _specs
+
+    known = set(_specs())
+    for c in _pod_spec(deployment).get("initContainers", []):
+        for name in _model_args(c.get("command", [])):
+            assert name in known, (
+                f"prefetch 가 모르는 이름: {name!r}. 아는 것: {sorted(known)}"
+            )
+
+
+#: `python -m iopaint.prefetch` 뒤에 값을 받는 옵션들. 그 값은 모델 이름이
+#: 아니므로 건너뛴다. 이름 목록을 하드코딩해 거르면 경로가 바뀔 때마다
+#: 시험이 엉뚱한 곳에서 깨진다.
+_VALUED_OPTS = {"--seed-from"}
+
+
+def _model_args(command: list[str]) -> list[str]:
+    """initContainer command 에서 모델 이름만 골라낸다."""
+    rest = command[command.index("iopaint.prefetch") + 1 :] if "iopaint.prefetch" in command else []
+    names, skip = [], False
+    for token in rest:
+        if skip:
+            skip = False
+            continue
+        if token in _VALUED_OPTS:
+            skip = True
+        elif not token.startswith("-"):
+            names.append(token)
+    return names

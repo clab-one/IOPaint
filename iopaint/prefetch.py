@@ -36,12 +36,30 @@ from loguru import logger
 def _specs() -> dict[str, tuple[str, str]]:
     """모델 이름 → (url, md5).
 
-    지우기 모델만 여기 있다. 플러그인 가중치는 각자 torch.hub 경로로 받으며
-    같은 PVC(XDG_CACHE_HOME) 아래로 떨어진다 - wave 3 에서 여기에 추가한다.
+    플러그인 가중치도 여기 있다. 플러그인은 생성 시점에 스스로 받지만,
+    그 시점이 파드 기동 중이라 **첫 기동이 다운로드만큼 길어진다.** 여기
+    등록해 두면 initContainer 가 미리 채우고, 기동은 md5 확인만 한다.
+
+    이름은 플러그인이 아니라 가중치 단위다 - 같은 플러그인이 모델을 바꿔
+    끼우므로(`--interactive-seg-model`) 배포가 고른 것만 받으면 된다.
     """
     from iopaint.model.lama import LAMA_MODEL_MD5, LAMA_MODEL_URL
+    from iopaint.plugins.interactive_seg import SEGMENT_ANYTHING_MODELS
+    from iopaint.plugins.realesrgan import REAL_ESRGAN_MODELS
 
-    return {"lama": (LAMA_MODEL_URL, LAMA_MODEL_MD5)}
+    specs = {"lama": (LAMA_MODEL_URL, LAMA_MODEL_MD5)}
+
+    # SAM 계열. 표를 그대로 쓴다 - 여기 URL 을 옮겨 적으면 플러그인이 받는
+    # 것과 어긋날 수 있고, 어긋나도 조용히 두 번 받을 뿐이라 안 드러난다.
+    for key, spec in SEGMENT_ANYTHING_MODELS.items():
+        specs[f"sam:{key}"] = (spec["url"], spec["md5"])
+
+    # 키가 enum 이라 값으로 눕힌다 - CLI 가 넘기는 문자열과 같아야
+    # `--interactive-seg-model` 처럼 배포 인자에서 그대로 쓸 수 있다.
+    for key, spec in REAL_ESRGAN_MODELS.items():
+        specs[f"realesrgan:{key.value}"] = (spec["url"], spec["model_md5"])
+
+    return specs
 
 
 def _seed_candidate(seed_root: str, path: str) -> str:

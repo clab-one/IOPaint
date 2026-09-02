@@ -375,6 +375,63 @@ class SRVGGNetCompact(nn.Module):
         return out
 
 
+def _rrdb(**kwargs):
+    """RRDBNet 을 늦게 가져온다.
+
+    표를 모듈 수준으로 올렸지만 import 까지 올리지는 않는다 - basicsr 은
+    무겁고, 표를 읽기만 하는 쪽(iopaint.prefetch)이 그 비용을 낼 이유가 없다.
+    """
+    from .basicsr import RRDBNet
+
+    return RRDBNet(**kwargs)
+
+
+# 모듈 수준이다. iopaint.prefetch 가 이 표를 그대로 읽어 initContainer 에서
+# 미리 받는다. 여기 URL 을 프리페치 쪽에 옮겨 적으면 어긋나도 조용히 두 번
+# 받을 뿐이라 드러나지 않는다 - 표는 한 벌만 둔다.
+REAL_ESRGAN_MODELS = {
+    RealESRGANModel.realesr_general_x4v3: {
+        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth",
+        "scale": 4,
+        "model": lambda: SRVGGNetCompact(
+            num_in_ch=3,
+            num_out_ch=3,
+            num_feat=64,
+            num_conv=32,
+            upscale=4,
+            act_type="prelu",
+        ),
+        "model_md5": "91a7644643c884ee00737db24e478156",
+    },
+    RealESRGANModel.RealESRGAN_x4plus: {
+        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+        "scale": 4,
+        "model": lambda: _rrdb(
+            num_in_ch=3,
+            num_out_ch=3,
+            num_feat=64,
+            num_block=23,
+            num_grow_ch=32,
+            scale=4,
+        ),
+        "model_md5": "99ec365d4afad750833258a1a24f44ca",
+    },
+    RealESRGANModel.RealESRGAN_x4plus_anime_6B: {
+        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
+        "scale": 4,
+        "model": lambda: _rrdb(
+            num_in_ch=3,
+            num_out_ch=3,
+            num_feat=64,
+            num_block=6,
+            num_grow_ch=32,
+            scale=4,
+        ),
+        "model_md5": "d58ce384064ec1591c2ea7b79dbf47ba",
+    },
+}
+
+
 class RealESRGANUpscaler(BasePlugin):
     name = "RealESRGAN"
     support_gen_image = True
@@ -387,49 +444,6 @@ class RealESRGANUpscaler(BasePlugin):
         self._init_model(name)
 
     def _init_model(self, name):
-        from .basicsr import RRDBNet
-
-        REAL_ESRGAN_MODELS = {
-            RealESRGANModel.realesr_general_x4v3: {
-                "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth",
-                "scale": 4,
-                "model": lambda: SRVGGNetCompact(
-                    num_in_ch=3,
-                    num_out_ch=3,
-                    num_feat=64,
-                    num_conv=32,
-                    upscale=4,
-                    act_type="prelu",
-                ),
-                "model_md5": "91a7644643c884ee00737db24e478156",
-            },
-            RealESRGANModel.RealESRGAN_x4plus: {
-                "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-                "scale": 4,
-                "model": lambda: RRDBNet(
-                    num_in_ch=3,
-                    num_out_ch=3,
-                    num_feat=64,
-                    num_block=23,
-                    num_grow_ch=32,
-                    scale=4,
-                ),
-                "model_md5": "99ec365d4afad750833258a1a24f44ca",
-            },
-            RealESRGANModel.RealESRGAN_x4plus_anime_6B: {
-                "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
-                "scale": 4,
-                "model": lambda: RRDBNet(
-                    num_in_ch=3,
-                    num_out_ch=3,
-                    num_feat=64,
-                    num_block=6,
-                    num_grow_ch=32,
-                    scale=4,
-                ),
-                "model_md5": "d58ce384064ec1591c2ea7b79dbf47ba",
-            },
-        }
         if name not in REAL_ESRGAN_MODELS:
             raise ValueError(f"Unknown RealESRGAN model name: {name}")
         model_info = REAL_ESRGAN_MODELS[name]
