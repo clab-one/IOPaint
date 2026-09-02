@@ -15,4 +15,4 @@ resources:
 # 손으로 고치지 마라 - 다음 빌드가 덮어쓴다. 아래 두 줄의 형식은 CI가 의존한다.
 images:
 - name: ghcr.io/clab-one/folio-iopaint
-  digest: sha256:a7661713f980aec6fbd53526f20b62adbdab2276c2152bf9beb31bfda195c4ae
+  digest: sha256:76af751ea1d2f75f33ec1dc477a29635e5b6c546da56a516067f5ccdcf8d4a98
