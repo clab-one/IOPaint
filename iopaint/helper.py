@@ -155,9 +155,38 @@ def pil_to_bytes(pil_img, ext: str, quality: int = 95, infos={}) -> bytes:
     return image_bytes
 
 
+#: 디코드를 허용할 최대 픽셀 수.
+#:
+#: 왜 필요한가 - Pillow 기본값은 89.5M 픽셀에서 **경고만** 내고 그 2배
+#: (약 179M)를 넘어야 예외를 던진다. 즉 178M 픽셀짜리 PNG 가 통과한다.
+#: 전부 같은 색이면 압축본은 수백 KB 다. 디코드하면 RGB 배열만 537MB 이고
+#: LaMa 첫 컨볼루션의 활성값은 그보다 훨씬 크다 - 요청 하나로 컨테이너가
+#: OOMKill 된다.
+#:
+#: 40M 은 6000x6666 이다. 휴대폰 사진(48MP 는 8000x6000 = 48M)보다 작지만,
+#: 이 서버는 **마스크 bbox 로 잘라낸 ROI** 를 받는 것이 정상 경로다.
+#: 원본 전체를 올리는 세션 생성은 별도로 바이트 상한이 걸려 있다.
+MAX_IMAGE_PIXELS = 40_000_000
+
+
+def _guard_pixels(image, where: str):
+    """편 뒤가 아니라 **열어 본 직후**에 크기를 본다.
+
+    `Image.open` 은 헤더만 읽고 게으르게 돌아온다. 그 시점에 `size` 로
+    거절하면 픽셀을 한 번도 만들지 않는다. `convert`·`np.array` 뒤에
+    검사하면 이미 메모리를 쓴 다음이라 막는 의미가 없다.
+    """
+    width, height = image.size
+    if width * height > MAX_IMAGE_PIXELS:
+        raise ValueError(
+            f"{where}: {width}x{height} = {width * height} 픽셀은 상한 "
+            f"{MAX_IMAGE_PIXELS} 을 넘는다"
+        )
+
 def load_img(img_bytes, gray: bool = False, return_info: bool = False):
     alpha_channel = None
     image = Image.open(io.BytesIO(img_bytes))
+    _guard_pixels(image, "load_img")
 
     if return_info:
         infos = image.info
@@ -314,6 +343,7 @@ def decode_base64_to_image(
     image_bytes = base64.b64decode(encoding)
     ext = get_image_ext(image_bytes)
     image = Image.open(io.BytesIO(image_bytes))
+    _guard_pixels(image, "decode_base64_to_image")
 
     alpha_channel = None
     try:
@@ -358,36 +388,6 @@ def concat_alpha_channel(rgb_np_img, alpha_channel) -> np.ndarray:
             (rgb_np_img, alpha_channel[:, :, np.newaxis]), axis=-1
         )
     return rgb_np_img
-
-
-def adjust_mask(mask: np.ndarray, kernel_size: int, operate):
-    # fronted brush color "ffcc00bb"
-    # kernel_size = kernel_size*2+1
-    mask[mask >= 127] = 255
-    mask[mask < 127] = 0
-
-    if operate == "reverse":
-        mask = 255 - mask
-    else:
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (2 * kernel_size + 1, 2 * kernel_size + 1)
-        )
-        if operate == "expand":
-            mask = cv2.dilate(
-                mask,
-                kernel,
-                iterations=1,
-            )
-        else:
-            mask = cv2.erode(
-                mask,
-                kernel,
-                iterations=1,
-            )
-    res_mask = np.zeros((mask.shape[0], mask.shape[1], 4), dtype=np.uint8)
-    res_mask[mask > 128] = [255, 203, 0, int(255 * 0.73)]
-    res_mask = cv2.cvtColor(res_mask, cv2.COLOR_BGRA2RGBA)
-    return res_mask
 
 
 def gen_frontend_mask(bgr_or_gray_mask):

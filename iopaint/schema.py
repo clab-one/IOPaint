@@ -157,33 +157,4 @@ class RunPluginRequest(BaseModel):
     scale: float = Field(2.0, description="Scale for upscaling")
 
 
-class ServerConfigResponse(BaseModel):
-    plugins: List[PluginInfo]
-    modelInfos: List[ModelInfo]
-    removeBGModel: RemoveBGModel
-    removeBGModels: List[RemoveBGModel]
-    realesrganModel: RealESRGANModel
-    realesrganModels: List[RealESRGANModel]
-    interactiveSegModel: InteractiveSegModel
-    interactiveSegModels: List[InteractiveSegModel]
-    enableAutoSaving: bool
 
-
-class SwitchModelRequest(BaseModel):
-    name: str
-
-
-class SwitchPluginModelRequest(BaseModel):
-    plugin_name: str
-    model_name: str
-
-
-AdjustMaskOperate = Literal["expand", "shrink", "reverse"]
-
-
-class AdjustMaskRequest(BaseModel):
-    mask: str = Field(
-        ..., description="base64 encoded mask. 255 means area to do inpaint"
-    )
-    operate: AdjustMaskOperate = Field(..., description="expand/shrink/reverse")
-    kernel_size: int = Field(5, description="Kernel size for expanding mask")

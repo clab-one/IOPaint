@@ -14,14 +14,18 @@ iopaint start --model=lama --device=cpu --host=0.0.0.0 --port=8080
 
 | 메서드 | 경로 | 하는 일 |
 |---|---|---|
-| `POST` | `/api/v1/inpaint` | 이미지 + 마스크 → 지운 이미지 |
-| `GET` | `/api/v1/server-config` | 적재된 모델·플러그인 |
-| `GET` `POST` | `/api/v1/model` | 현재 모델 조회·전환 |
-| `POST` | `/api/v1/run_plugin_gen_mask` | 플러그인 마스크 생성 (segmentation) |
-| `POST` | `/api/v1/run_plugin_gen_image` | 플러그인 이미지 생성 (upscale, restore, remove-bg) |
-| `POST` | `/api/v1/switch_plugin_model` | 플러그인 모델 전환 |
-| `POST` | `/api/v1/adjust_mask` | 마스크 확장/축소/반전 |
-| `POST` | `/api/v1/save_image` | 출력 디렉터리에 저장 |
+| `POST` | `/api/v1/run_plugin_gen_image` | 확대·얼굴복원·배경제거 |
+
+노출된 경로는 **이것이 전부다.** upstream 의 13개에서 5개로 줄였다 -
+`test_api_surface.py` 가 그 목록을 계약으로 지킨다.
+
+지운 8개와 이유는 `iopaint/api.py` 의 라우트 등록부 주석에 있다. 요약하면
+클라이언트가 부르지 않는데 열려 있었고, 그중 셋은 입장 제어 밖이라
+`--inflight` 방어선에도 걸리지 않았다 - `adjust_mask` 는 150바이트 요청
+하나로 컨테이너를 OOMKill 할 수 있었다.
+
+`/docs` · `/redoc` · `/openapi.json` 도 끈다. 라우트를 줄여 놓고 남은 것의
+스키마를 게시하면 감축의 절반이 무의미하다.
 
 여기에 FOLIO 의 edit-session API 를 얹었다:
 

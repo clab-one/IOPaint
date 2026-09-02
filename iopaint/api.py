@@ -35,7 +35,6 @@ from iopaint.helper import (
     numpy_to_bytes,
     concat_alpha_channel,
     gen_frontend_mask,
-    adjust_mask,
 )
 from iopaint.model.utils import torch_gc
 from iopaint.scheduler import LocalBackend, Scheduler, build_remote
@@ -46,7 +45,6 @@ from iopaint.plugins.base_plugin import BasePlugin
 from iopaint.plugins.remove_bg import RemoveBG
 from iopaint.schema import (
     ApiConfig,
-    SwitchModelRequest,
     InpaintRequest,
     RunPluginRequest,
     PluginInfo,
@@ -250,10 +248,16 @@ class Api:
                 # 뜻이다 - 결과를 다시 확인한다.
                 if not s.alive or not s.working.exists():
                     raise HTTPException(status_code=404, detail="session not found")
-                image, alpha_channel, infos = load_img(
-                    s.working.read_bytes(), return_info=True
-                )
-                mask_np, _ = load_img(mask_bytes, gray=True)
+                # 픽셀 상한 위반은 413 이다. ValueError 를 그대로 올리면 500 이
+                # 되고 handle_exception 이 예외 원문(경로·판본)까지 흘린다 -
+                # 호출자가 고칠 수 있는 것은 "너무 크다" 하나다.
+                try:
+                    image, alpha_channel, infos = load_img(
+                        s.working.read_bytes(), return_info=True
+                    )
+                    mask_np, _ = load_img(mask_bytes, gray=True)
+                except ValueError as exc:
+                    raise HTTPException(status_code=413, detail=str(exc)) from exc
                 mask_np = cv2.threshold(mask_np, 127, 255, cv2.THRESH_BINARY)[1]
                 if image.shape[:2] != mask_np.shape[:2]:
                     raise HTTPException(
